@@ -212,15 +212,15 @@ class power_supply(Instrument):
 		return output_state[0] #query_ascii_values returns something like [True], but er only want True
 
 	def get_Vd(self): 
-		Val_Vd = self.inst.query_ascii_values('MEAS:VOlT:DC? P6V')
+		Val_Vd = self.inst.query_ascii_values('MEAS:VOlT:DC? P6V')[0]
 		return Val_Vd
 
 	def get_Id(self): 
-		Val_Id = self.inst.query_ascii_values('MEAS:CURR:DC? P6V')
+		Val_Id = self.inst.query_ascii_values('MEAS:CURR:DC? P6V')[0]
 		return Val_Id
 
 	def get_Vg(self): 
-		Val_Vg = self.inst.query_ascii_values('MEAS:VOlT:DC? P25V')
+		Val_Vg = self.inst.query_ascii_values('MEAS:VOlT:DC? P25V')[0]
 		return Val_Vg
 
 	def set_Vd(self, Vd):
@@ -359,6 +359,7 @@ class fridge_ADC(Instrument): #for the IOtech ADC488
 	def _convertBinData16(self,binDataString):
 		""" Converts binary data string to list of integers.
 		Assumes binary dats is 16bit signed ints ('>h') . 
+		from: Z:\backup_cedar\data\mkids\readout\python\MKIDs_Data_Automation\mkid.py
 		"""
 		data = []
 		for i in range(len(binDataString)/4):
@@ -367,53 +368,3 @@ class fridge_ADC(Instrument): #for the IOtech ADC488
 
 		return data
 
-	# def parse_binary(bytes_data, is_big_endian=False, is_single=False):
-	#     """Parse ascii data and return an iterable of numbers.
-	#     To be deprecated in 1.7
-	#     :param bytes_data: data to be parsed.
-	#     :param is_big_endian: boolean indicating the endianness.
-	#     :param is_single: boolean indicating the type (if not is double)
-	#     :return:
-	#     """
-	#     data = bytes_data
-
-	#     hash_sign_position = bytes_data.find(b"#")
-	#     if hash_sign_position == -1:
-	#         raise ValueError('Could not find valid hash position')
-
-	#     if hash_sign_position > 0:
-	#         data = data[hash_sign_position:]
-
-	#     data_1 = data[1:2].decode('ascii')
-
-	#     if data_1.isdigit() and int(data_1) > 0:
-	#         number_of_digits = int(data_1)
-	#         # I store data and data_length in two separate variables in case
-	#         # that data is too short.  FixMe: Maybe I should raise an error if
-	#         # it's too long and the trailing part is not just CR/LF.
-	#         data_length = int(data[2:2 + number_of_digits])
-	#         data = data[2 + number_of_digits:2 + number_of_digits + data_length]
-	#     else:
-	#         data = data[2:]
-	#         if data[-1:].decode('ascii') == "\n":
-	#             data = data[:-1]
-	#         data_length = len(data)
-
-	#     if is_big_endian:
-	#         endianess = ">"
-	#     else:
-	#         endianess = "<"
-
-	#     try:
-	#         if is_single:
-	#             fmt = endianess + str(data_length // 4) + 'f'
-	#         # if is_short:
-	#         #     fmt = endianess + str(data_length // 2) + 'h'
-	#         else:
-	#             fmt = endianess + str(data_length // 8) + 'd'
-
-	#         result = list(struct.unpack(fmt, data))
-	#     except struct.error:
-	#         raise ValueError("Binary data itself was malformed")
-
-	#     return result
