@@ -24,6 +24,18 @@ class Instrument(object):
 		self.inst = Instrument.rm.open_resource(resource_name, open_timeout=0)
 		self.inst.timeout = 10000 # milliseconds
 		self.resource_name = resource_name
+		self.Name = 'Instrument Superclass'
+		self.Verbose = True
+		# if self.Verbose:
+		# 	print('Instantiating {}'.format(self.Name))
+
+	def __del__(self):
+		self.inst.close()
+		if self.Verbose:
+			print('Deleting {}'.format(self.Name))
+
+	def __str__(self):
+		print('{} at {}'.format(self.Name, self.resource_name))
 
 	def identify(self):
 		identification  = self.inst.query("*IDN?")	
@@ -48,7 +60,7 @@ class Instrument(object):
 		#stb = None
 		if code == None:
 			while  self.inst.read_stb() == 0:
-				print(self.inst.read_stb())
+				#print('stb code is: {}'.format(self.inst.read_stb()))
 				time.sleep(pause)
 				elapsed = time.time()
 				if elapsed - start > self.inst.timeout/1000.0:
@@ -70,17 +82,21 @@ class Instrument(object):
 		this  indicats that  the instrument is ready for the next command.
 		'''
 		self.inst.query_ascii_values('*OPC?;') # will equal 1.0 when instrument has completed operation
-	#before_close()
+	
 
 class network_analyzer(Instrument):
 	def __init__(self,resource_name):
 		Instrument.__init__(self, resource_name)
+		self.Name = 'Network Analyzer'
 		self.inst.chunk_size = 2**15 # in bytes
 		self.inst.timeout = 25000 #milliseconds, None is infinite timeout  NOTE: This number applies to queries
 		self.inst.values_format.is_binary = True
 		self.inst.values_format.datatype = 'd' # 'f' floats and 'd' double
 		self.inst.values_format.is_big_endian = True
 		self.inst.values_format.container = np.array
+		self.max_na_scan_points = 1601
+		self.min_na_scan_points = 2
+		self.average_count = 0
 
 	def on(self):
 		self.inst.write('OUTP ON ;')
@@ -105,11 +121,12 @@ class network_analyzer(Instrument):
 		'''
 		Set up ageraging and  start average.
 		'''
+		self.average_count =  avg_count
 		self.inst.write(':SENS{0}:AVER:COUNT {1};'.format(channel, avg_count))
 		self.inst.write(':SENS{0}:AVER ON;'.format(channel))
 		self.inst.write(':TRIG:AVER ON;')
 
-	def turn_off_averageing(self, channel = 1):
+	def turn_off_averaging(self, channel = 1):
 		self.inst.write(':TRIG:AVER OFF;')
 		self.inst.write(':SENS{0}:AVER OFF;'.format(channel))
 		
@@ -118,9 +135,10 @@ class network_analyzer(Instrument):
 		return sweep  time in seconds. 
 		if update_timout == True , make timeout = scan_time + 2 seconds/ 
 		'''
-		sweep_time = self.inst.query_ascii_values(':SENS{0}:SWE:TIME?;'.format(channel)) # returns list type
+		sweep_time = self.inst.query_ascii_values(':SENS{0}:SWE:TIME?;'.format(channel))[0] # returns list type
+		avg_count = self.average_count if self.average_count > 0 else 1
 		if update_timout:
-			self.inst.timeout = (sweep_time[0] + 2.0) * 1000 # milliseconds
+			self.inst.timeout = (sweep_time*avg_count + 2.0) * 1000 # milliseconds
 		return sweep_time[0] #seconds
 
 	def setup_single_scan_mode(self, channel = 1):
@@ -161,14 +179,26 @@ class network_analyzer(Instrument):
 	def set_num_points_per_scan(self, points_per_scan,  channel = 1):
 		self.inst.write(':SENS{0}:SWE:POIN {1} ;'.format(channel, points_per_scan))
 
+	def get_num_points_per_scan(self, channel = 1):
+		num_pts = self.inst.query_ascii_values(':SENS{0}:SWE:POIN?;'.format(channel))[0]
+		return num_pts
+
 	def set_start_freq(self,f_Hz, channel = 1):
-		self.inst.write(':SENS{0}:FREQ:STAR {1} ;'.format(channel, f_Hz))
+		self.inst.write(':SENS{0}:FREQ:STAR {1:f} ;'.format(channel, f_Hz))
+
+	def get_start_freq(self, channel = 1):
+		start_freq = self.inst.query_ascii_values(':SENS{0}:FREQ:STAR?;'.format(channel))[0]
+		return start_freq
 
 	def set_stop_freq(self,f_Hz, channel = 1):
-		self.inst.write(':SENS{0}:FREQ:STOP {1} ;'.format(channel, f_Hz))
+		self.inst.write(':SENS{0}:FREQ:STOP {1:f} ;'.format(channel, f_Hz))
+
+	def get_stop_freq(self, channel = 1):
+		stop_freq = self.inst.query_ascii_values(':SENS{0}:FREQ:STOP?;'.format(channel))[0]
+		return stop_freq
 
 	def set_center_freq(self,f_Hz, channel = 1):
-		self.inst.write(':SENS{0}:FREQ:CENT {1} ;'.format(channel, f_Hz))
+		self.inst.write(':SENS{0}:FREQ:CENT {1:f} ;'.format(channel, f_Hz))
 
 	def read_scan_data(self,channel = 1):
 		'''
@@ -196,6 +226,7 @@ class network_analyzer(Instrument):
 class power_supply(Instrument):
 	def __init__(self,resource_name):
 		Instrument.__init__(self, resource_name)
+		self.Name = 'LNA power supply'
 		#self.inst.values_format.container = np.array
 		self.VdLimit = 3
 		self.IdLimit = 0.025
@@ -232,6 +263,7 @@ class power_supply(Instrument):
 class synthesizer(Instrument):
 	def __init__(self,resource_name):
 		Instrument.__init__(self, resource_name)
+		self.Name = 'Synthesizer'
 		identification = self.identify()
 		if 'MG3692B' in identification: # Anritsu
 			self.model = 'MG3692B'
@@ -269,9 +301,11 @@ class fridge_DAC(Instrument): #for the Keithley 213
 	_allchars = ''.join(chr(i) for i in xrange(256))
 	_identity = string.maketrans('','')
 	_nondigits_additive = _allchars.translate(_identity,string.digits+"+-.")
+	
 
 	def __init__(self,resource_name):
 		Instrument.__init__(self, resource_name)
+		self.Name = 'Keithly 213 voltage supply'
 		self.inst.query_delay = 0.0
 
 	def set_voltage(self, DAC_port, voltage):
@@ -312,6 +346,7 @@ class fridge_ADC(Instrument): #for the IOtech ADC488
 	'''
 	def __init__(self,resource_name):
 		Instrument.__init__(self, resource_name)
+		self.Name = 'IO Tech Digitizer'
 		self.inst.chunk_size = 2**15 # in bytes
 		self.inst.values_format.is_binary = True
 		self.inst.values_format.datatype = 'h' #'h' for short,  'f' floats and 'd' double

@@ -27,30 +27,34 @@ class fridge_interface:
 		self.Sample_Heater_Voltage = 0.0 #Volts
 		self.Stack_Heater_Voltage = 0.0 #Volts
 		self.Thermometers = {}
-		self.Diagnostic_Plots = True
-		inl = Instruments.Instrument_Name_List
-		self.ADC= Instruments.fridge_ADC(inl.DIGITIZER_ADC488)
-		self.DAC = Instruments.fridge_DAC(inl.VOLTAGE_SOURCE_K213)
+		self.Diagnostic_Plots = False
+		self.Verbose = True
+		self.inl = Instruments.Instrument_Name_List
+		self.ADC= Instruments.fridge_ADC(self.inl.DIGITIZER_ADC488)
+		self.DAC = Instruments.fridge_DAC(self.inl.VOLTAGE_SOURCE_K213)
 
 		
 		self.thermometer_list = []
 		self.device_list = []
 		thermometer_list_index = 0 
 		device_list_index = 0
-		self.stack_heater_index = None
-		self.aux_channel_index = None
+		#self.stack_heater_index = None
+		#self.aux_channel_index = None
+		self.channel_name_to_index_dict = {'Stack_Heater': None, 'Aux': None} # Mappping from channel name to thermometer_list/device_list indes
 		for device in devices:
 			if isinstance(fridge_interface.channel_calibration.device_dict[device[0]], fridge_interface.channel_calibration.thermometer_calibration):
 				fridge_interface.channel_calibration.device_dict[device[0]].__dict__.update(fridge_interface.channel_config.config_dict[device[1]].__dict__)
 				self.thermometer_list.append(fridge_interface.channel_calibration.device_dict[device[0]])
+				self.channel_name_to_index_dict[device[1]] = thermometer_list_index
 				thermometer_list_index += 1
 			elif  isinstance(fridge_interface.channel_calibration.device_dict[device[0]], fridge_interface.channel_calibration.device_calibration):
 				fridge_interface.channel_calibration.device_dict[device[0]].__dict__.update(fridge_interface.channel_config.config_dict[device[1]].__dict__)
 				self.device_list.append(fridge_interface.channel_calibration.device_dict[device[0]])
-				if fridge_interface.channel_calibration.device_dict[device[0]].Channel_Name == 'Stack_Heater':
-					self.stack_heater_index = device_list_index
-				elif fridge_interface.channel_calibration.device_dict[device[0]].Channel_Name == 'Aux':
-					self.aux_channel_index = device_list_index
+				# if fridge_interface.channel_calibration.device_dict[device[0]].Channel_Name == 'Stack_Heater':
+				# 	self.stack_heater_index = device_list_index
+				# elif fridge_interface.channel_calibration.device_dict[device[0]].Channel_Name == 'Aux':
+				# 	self.aux_channel_index = device_list_index
+				self.channel_name_to_index_dict[device[1]] = device_list_index
 				device_list_index += 1
 			else:
 				logging.error('Unrecognized device')
@@ -60,6 +64,9 @@ class fridge_interface:
 			voltage = self.DAC.read_voltage(device.DAC_Port)
 			print('device {} has voltage set to {} V'.format(device.Name, voltage[0]))
 
+	def __del__(self):
+		if self.Verbose:
+			print('Deleting Fridge_Interface object.' )
 
 	def set_thermometer_bias_voltage(self, bias_voltage):
 		if np.abs(bias_voltage) > 0.2:
@@ -69,26 +76,35 @@ class fridge_interface:
 			print('Themometer bias set to {} V.'.format(bias_voltage))
 
 	def set_stack_heater_voltage(self,voltage):
-		if self.stack_heater_index ==None:
+		#if self.stack_heater_index ==None:
+		Stack_Heater_Index = self.channel_name_to_index_dict['Stack_Heater']
+		if Stack_Heater_Index ==None:
 			logging.error('Attempt to set stack heater voltage when no stack heater is configured')			
+		
 		elif  np.abs(voltage) > self.Max_Stack_Heater_Voltage:	
 			logging.warning('Attempt to set stack heater to {} V. Setting to {} V instead.'.format(voltage, self.Max_Stack_Heater_Voltage))
 			#self.DAC.set_voltage(fridge_interface.channel_config.Stack_Heater.DAC_Port, self.Max_Stack_Heater_Voltage)
-			self.DAC.set_voltage(self.device_list[self.stack_heater_index].DAC_Port, self.Max_Stack_Heater_Voltage)
+			#self.DAC.set_voltage(self.device_list[self.stack_heater_index].DAC_Port, self.Max_Stack_Heater_Voltage)
+			self.DAC.set_voltage(self.device_list[Stack_Heater_Index].DAC_Port, self.Max_Stack_Heater_Voltage)
 		else:
 			#self.DAC.set_voltage(fridge_interface.channel_config.Stack_Heater.DAC_Port, heater_voltage)
-			self.DAC.set_voltage(self.device_list[self.stack_heater_index].DAC_Port, voltage)
+			#self.DAC.set_voltage(self.device_list[self.stack_heater_index].DAC_Port, voltage)
+			self.DAC.set_voltage(self.device_list[Stack_Heater_Index].DAC_Port, voltage)
 
 	def set_aux_channel_voltage(self,voltage):
-		if self.aux_channel_index ==None:
+		Aux_Index = self.channel_name_to_index_dict['Aux']
+		#if self.aux_channel_index ==None:
+		if Aux_Index == None:
 			logging.error('Attempt to set aux channel when no aux channel is configured')	
 		elif  np.abs(voltage) > self.Max_Aux_Channel_Voltage:	
 			logging.warning('Attempt to set aux channel to {} V. Setting to {} V instead.'.format(voltage, self.Max_Aux_Channel_Voltage))
 			#self.DAC.set_voltage(fridge_interface.channel_config.Sample_Heater.DAC_Port, self.Max_Sample_Heater_Voltage)
-			self.DAC.set_voltage(self.device_list[self.aux_channel_index_index].DAC_Port, self.Max_Stack_Heater_Voltage)
+			#self.DAC.set_voltage(self.device_list[self.aux_channel_index_index].DAC_Port, self.Max_Stack_Heater_Voltage)
+			self.DAC.set_voltage(self.device_list[Aux_Index].DAC_Port, self.Max_Stack_Heater_Voltage)
 		else:
 			#self.DAC.set_voltage(fridge_interface.channel_config.Sample_Heater.DAC_Port, voltage)
-			self.DAC.set_voltage(self.device_list[self.aux_channel_index].DAC_Port, voltage)
+			#self.DAC.set_voltage(self.device_list[self.aux_channel_index].DAC_Port, voltage)
+			self.DAC.set_voltage(self.device_list[Aux_Index].DAC_Port, voltage)
 
 	def read_LHe_level(self):
 		num_readings = 1000
@@ -140,7 +156,14 @@ class fridge_interface:
 		#print('Resistance is {}, corresponding to a temp of {}')
 		return Temp
 
-	def read_temp(self, thermometer_list_index):
+	def suspend(self):
+		del (self.DAC, self.ADC)
+
+	def resume(self):
+		self.ADC= Instruments.fridge_ADC(self.inl.DIGITIZER_ADC488)
+		self.DAC = Instruments.fridge_DAC(self.inl.VOLTAGE_SOURCE_K213)
+
+	def read_temp(self, channel_name):
 		'''
 		Note Num_Readings * (ADC Scan_Interval) = (i) * (DAC Voltage Interval * 2 for quare wave)
 		e.g. Scan_Interval = 'I5' = 500 usec/point, DAC Voltage Intergal = 'I20' = 20 msec, so wave period is 40 msec
@@ -149,8 +172,8 @@ class fridge_interface:
 		correct the mean with medians of positive and negative point!
 		'''
 		num_readings = 400
-		n = thermometer_list_index
-
+		n = self.channel_name_to_index_dict[channel_name]
+		
 		#switch mux to proper channel
 		self.DAC.select_ADC_channel(self.thermometer_list[n].MUX_Channel)
 		
@@ -162,7 +185,7 @@ class fridge_interface:
 
 		#Read V Waveform
 		V =  self.ADC.read_adc(self.thermometer_list[n].ADC_V_Channel, 3,5,num_readings)
-
+		
 		# Clean up noisey date,  and find aplitude of crest and trough
 		ii = I - I.mean()
 		ipp = ii[ii > 0]
@@ -205,9 +228,9 @@ class fridge_interface:
 
 			plt.show()
 
-	
+		#
 		#Determine Temperature from R...
-
+		#
 		# tc is the Resistance to Temp conversion function
 		tc = self.thermometer_list[n].Temp_Conversion
 

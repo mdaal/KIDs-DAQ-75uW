@@ -7,6 +7,120 @@ if 0:
 	#ADC = Instruments.fridge_ADC('GPIB1::14::INSTR')
 	#DAC = Instruments.fridge_DAC('GPIB1::17::INSTR')
 
+
+if 0:
+	import fractions 
+	import numpy as np
+	min_number_of_na_scan_pts = 100.
+	max_na_points_per_scan =  1601.
+
+	#def find_num_points_per_na_scan(min_num_scan_pts_req, min_number_of_na_scan_pts):
+	def round_up(x):
+		return int(np.ceil(x/min_number_of_na_scan_pts)) * min_number_of_na_scan_pts
+
+	def round_down(x):
+		return int(np.floor(x/min_number_of_na_scan_pts)) * min_number_of_na_scan_pts
+
+
+if 0: 
+	import contextlib
+
+	@contextlib.contextmanager
+	def A(idx,func):
+		print 'entering A'
+		for ai in xrange(idx):
+			myprint('loop A',ai)
+		print 'exiting A'
+
+	@contextlib.contextmanager
+	def B(idx,func):
+		print 'entering B'
+		for bi in xrange(idx):
+			myprint('loop B',bi)
+		print 'exiting B'
+
+
+	def my_print(px = None, pl = None, ax = None, al=  None):
+		print 'Pindex: {}, Pvalue {}, Aindex {}, Avalue {}'.format( px, pl, ax, al)
+
+	@contextlib.contextmanager
+	def nacontex(x):
+		print('set up na', x)
+		na = 'thi is na'
+		try:
+			print('before yield')
+			yield na, x
+			print('after yield')
+		finally:
+	 		print('take down na')
+
+	with nacontex(3) as n:
+	    print(n[0] , ' and ', n[1])
+	   
+
+	with nacontex(2) as n:
+	    print(n[0] , ' and ', n[1])
+	    1/0
+    
+
+	# def loop1(funct, Plist):
+	# 	def fu(**k):
+	# 		for i in xrange(len(Plist)):
+	# 			funct(px = i, pl = Plist[i], **k )
+	# 	return fu
+
+	# def loop2(funct, Alist):
+	# 	def fu2(**l):
+	# 		for a in xrange(len(Alist)):
+	# 			funct(ax = a ,al = Alist[a], **l )
+	# 	return fu2
+
+	def loop1(funct, Plist):
+		def fu(**k):
+			print('entering loop 1')
+			_i = 0
+			for i in Plist:
+				funct(px = _i, pl = i, **k )
+				_i = _i +1
+			print('exiting loop 1')
+		return fu
+
+	def loop2(funct, Alist):
+		def fu2(**l):
+			print('entering loop 2')
+			_a = 0
+			for a in Alist:
+				funct(ax = _a ,al = a, **l )
+				_a = _a + 1
+			print('exiting loop 2')
+		return fu2
+
+	#*****************
+	PP = [35, 2]
+	AA = [5, 20]
+
+	
+	def loop11(funct):
+		def fu(**kwd):
+			print('entering loop 1')
+			_i = 0
+			for i in PP:
+				funct(px = _i, pl = i, **kwd )
+				_i = _i +1
+			print('exiting loop 1')
+		return fu
+
+	def loop22(funct):
+		def fu2(**kwd):
+			print('entering loop 2')
+			_a = 0
+			for a in AA:
+				funct(ax = _a ,al = a, **kwd )
+				_a = _a + 1
+			print('exiting loop 2')
+		return fu2
+	#*****************
+
 if 1:
 	import Measurement_Managers
 	reload(Measurement_Managers)
@@ -16,6 +130,7 @@ if 1:
 	reload(Fridge_Interfaces)
 	devices = [('RuOx2','MF2'), ('Ge3', 'MF1'),('Ge4', 'MF3'), ('Stack_Heater_1','Stack_Heater'), ('Helmholtz_Coil', 'Aux')]
 	mm = Measurement_Managers.measurement_manager(devices, 'Run53ab')
+	#mm.single_scan('Survey.txt', 'Run_53ab_Data.h5')
 
 
 
