@@ -1,9 +1,10 @@
-import visa
-import numpy as np
+import visa #developed with version 1.8
+import numpy as np #developed with version 1.10.1
 import time 
 import logging
 import string
 import struct
+import PyDAQmx as pdmx # developed with version 1.3
 
 class Instrument_Name_List:
 	NETWORK_ANALYZER_E5071B = 'TCPIP0::169.229.225.4::inst0::INSTR'
@@ -12,6 +13,7 @@ class Instrument_Name_List:
 	SYNTHESIZER_E4425B = ''
 	DIGITIZER_ADC488 = 'GPIB1::14::INSTR'
 	VOLTAGE_SOURCE_K213 = 'GPIB1::17::INSTR'
+	SOURCE_METER_2612A =  'GPIB0::26::INSTR'
 
 	
 
@@ -19,15 +21,15 @@ class Instrument_Name_List:
 class Instrument(object):
 	rm = visa.ResourceManager()
 
-	def __init__(self, resource_name):
+	def __init__(self, resource_name, Name = 'Instrument Superclass'):
 		#self.rm = visa.ResourceManager()
 		self.inst = Instrument.rm.open_resource(resource_name, open_timeout=0)
 		self.inst.timeout = 10000 # milliseconds
 		self.resource_name = resource_name
-		self.Name = 'Instrument Superclass'
+		self.Name = Name
 		self.Verbose = True
-		# if self.Verbose:
-		# 	print('Instantiating {}'.format(self.Name))
+		if self.Verbose:
+			print('Instantiating {}'.format(self.Name))
 
 	def __del__(self):
 		self.inst.close()
@@ -36,6 +38,9 @@ class Instrument(object):
 
 	def __str__(self):
 		print('{} at {}'.format(self.Name, self.resource_name))
+
+	def list_resources(self):
+		Instrument.rm.list_resources()
 
 	def identify(self):
 		identification  = self.inst.query("*IDN?")	
@@ -83,11 +88,103 @@ class Instrument(object):
 		'''
 		self.inst.query_ascii_values('*OPC?;') # will equal 1.0 when instrument has completed operation
 	
+class source_meter(Instrument):
+	def __init__(self,resource_name, Name = 'Source Meter'):
+		Instrument.__init__(self, resource_name, Name = Name)
+		#self.inst.read_termination = u'\r\n'
+
+		# set display to show both channels a and b
+		self.setup_display()
+
+		#set sourcing state to voltag  sourcing
+		self.set_source_funct('a', 1) 
+		self.set_source_funct('b', 1) 
+
+		#set voltage compliance
+		self.set_voltage_current_compliance_limits('a', 'v', 30)
+		self.set_voltage_current_compliance_limits('b', 'v', 30)
+
+		#set voltage range to Range to allow 28V for SMA switch
+		self.set_voltage_current_range('a', 'v', 30)
+		self.set_voltage_current_range('b', 'v', 30)
+
+	
+	def set_voltage_current_compliance_limits(self, channel, voltage_or_current,  voltage_or_current_value):
+		'''
+		set allowable voltage output range.
+		channel  can be  'a' or 'b'.
+		voltage_or_current can be 'v' or 'i'
+		'''
+		self.inst.write('smu{}.source.limit{} = {}'.format(channel.lower(), voltage_or_current.lower(), voltage_or_current_value))
+
+
+	def set_voltage_current_range(self, channel, voltage_or_current,  voltage_or_current_value):
+		'''
+		set allowable voltage output range.
+		channel  can be  'a' or 'b'.
+		voltage_or_current can be 'v' or 'i'
+		'''
+		self.inst.write('smu{}.source.range{} = {}'.format(channel.lower(), voltage_or_current.lower(), voltage_or_current_value))
+
+	def set_voltage(self, channel, voltage):
+		'''
+		channel  is 'a' or 'b'.
+		can do +/- 200V
+		'''
+		self.inst.write('smu{}.source.levelv = {}'.format(channel.lower(),voltage))
+
+	def query_voltage(self,channel):
+		'''
+		channel is 'a' or 'b'
+		'''
+		voltage = self.inst.query_ascii_values('x = smu{}.source.levelv print(x)'.format(channel))[0]
+		return voltage
+
+	def set_source_funct(self, channel, voltage_or_current):
+		'''
+		Sets the sourceing state. 
+		channel is 'a' or 'b'
+		voltage_or_current can be: 
+		0 for DC Amps
+		1 for DC Volts
+		'''
+		self.inst.write('smu{}.source.func = {}'.format(channel, voltage_or_current))
+
+	def clear_errors(self):
+		self.inst.write('errorqueue.clear()')
+
+	def on(self,channel):
+		'''
+		channel  is 'a' or 'b'.
+		'''
+		self.toggle_on_off(channel, 1)
+
+	def off(self,channel):
+		'''
+		channel  is 'a' or 'b'.
+		'''
+		self.toggle_on_off(channel, 0)
+
+	def setup_display(self):
+		'''
+		sets  display screen to show both channel a and channel b
+		'''
+		self.inst.write('display.screen = 2') # 2 is both a & b; 1 is b; and 0 is a 
+		
+
+
+	def toggle_on_off(self,channel, state):
+		'''
+		channel  is 'a' or 'b'.
+		state is 0 or  off and 1 for on
+		'''
+		self.inst.write('smu{}.source.output={}'.format(channel, state))
+
+
 
 class network_analyzer(Instrument):
-	def __init__(self,resource_name):
-		Instrument.__init__(self, resource_name)
-		self.Name = 'Network Analyzer'
+	def __init__(self,resource_name, Name = 'Network Analyzer'):
+		Instrument.__init__(self, resource_name, Name = Name)
 		self.inst.chunk_size = 2**15 # in bytes
 		self.inst.timeout = 25000 #milliseconds, None is infinite timeout  NOTE: This number applies to queries
 		self.inst.values_format.is_binary = True
@@ -139,7 +236,7 @@ class network_analyzer(Instrument):
 		avg_count = self.average_count if self.average_count > 0 else 1
 		if update_timout:
 			self.inst.timeout = (sweep_time*avg_count + 2.0) * 1000 # milliseconds
-		return sweep_time[0] #seconds
+		return sweep_time #seconds
 
 	def setup_single_scan_mode(self, channel = 1):
 		'''
@@ -224,9 +321,8 @@ class network_analyzer(Instrument):
 
 
 class power_supply(Instrument):
-	def __init__(self,resource_name):
-		Instrument.__init__(self, resource_name)
-		self.Name = 'LNA power supply'
+	def __init__(self,resource_name, Name = 'LNA power supply'):
+		Instrument.__init__(self, resource_name, Name = Name)
 		#self.inst.values_format.container = np.array
 		self.VdLimit = 3
 		self.IdLimit = 0.025
@@ -261,9 +357,10 @@ class power_supply(Instrument):
 		self.inst.write('INST P25V; VOLT {}'.format(Vg))
 
 class synthesizer(Instrument):
-	def __init__(self,resource_name):
-		Instrument.__init__(self, resource_name)
-		self.Name = 'Synthesizer'
+	def __init__(self,resource_name, Name = 'Synthesizer'):
+		Instrument.__init__(self, resource_name, Name = Name)
+		self.settle_time = 0.9 # Seconds    Is the time th  syn needs to be within 1KHz of set frequency
+
 		identification = self.identify()
 		if 'MG3692B' in identification: # Anritsu
 			self.model = 'MG3692B'
@@ -278,6 +375,7 @@ class synthesizer(Instrument):
 			self.inst.write('F0 {:12.11f} HZ CF0'.format(freq)) # or e.g. 'F0 %12.11f HZ CF0' %  freq
 		elif self.model == 'E4425B':
 			self.inst.write(':FREQ {:12.11f} HZ'.format(freq))
+		time.sleep(self.settle_time)
 
 	def set_power(self,power):
 		if self.model == 'MG3692B':
@@ -303,9 +401,8 @@ class fridge_DAC(Instrument): #for the Keithley 213
 	_nondigits_additive = _allchars.translate(_identity,string.digits+"+-.")
 	
 
-	def __init__(self,resource_name):
-		Instrument.__init__(self, resource_name)
-		self.Name = 'Keithly 213 voltage supply'
+	def __init__(self,resource_name, Name = 'Keithly 213 voltage supply'):
+		Instrument.__init__(self, resource_name, Name = Name)
 		self.inst.query_delay = 0.0
 
 	def set_voltage(self, DAC_port, voltage):
@@ -319,7 +416,7 @@ class fridge_DAC(Instrument): #for the Keithley 213
 		return converted
 
 	def read_voltage(self, DAC_port):
-		reply = self.inst.query_ascii_values('P{0} C0 A1 X V?'.format(DAC_port) , converter= self._convert_to_float)
+		reply = self.inst.query_ascii_values('P{0} C0 A1 X V?'.format(DAC_port) , converter= self._convert_to_float)[0]
 		self._wait_stb()
 		return reply
 
@@ -344,9 +441,8 @@ class fridge_ADC(Instrument): #for the IOtech ADC488
 	Digitized values returned from it are 16-bit signed integers in big_endian format (matlab 'int16', python '>h'). 
 
 	'''
-	def __init__(self,resource_name):
-		Instrument.__init__(self, resource_name)
-		self.Name = 'IO Tech Digitizer'
+	def __init__(self,resource_name, Name = 'IO Tech Digitizer'):
+		Instrument.__init__(self, resource_name, Name = Name)
 		self.inst.chunk_size = 2**15 # in bytes
 		self.inst.values_format.is_binary = True
 		self.inst.values_format.datatype = 'h' #'h' for short,  'f' floats and 'd' double
@@ -394,7 +490,7 @@ class fridge_ADC(Instrument): #for the IOtech ADC488
 	def _convertBinData16(self,binDataString):
 		""" Converts binary data string to list of integers.
 		Assumes binary dats is 16bit signed ints ('>h') . 
-		from: Z:\backup_cedar\data\mkids\readout\python\MKIDs_Data_Automation\mkid.py
+		from: Z:\backup_cedar\data\mkids\readout\python\MKIDs_Data_Automation\mkid.py as of Feb 2016
 		"""
 		data = []
 		for i in range(len(binDataString)/4):

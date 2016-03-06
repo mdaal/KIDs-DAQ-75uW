@@ -20,7 +20,7 @@ class fridge_interface:
 		#self.construct_configuration()
 		self.Max_Stack_Heater_Voltage = 3.1 # Volts
 		self.Max_Aux_Channel_Voltage = 10.0  # Volts
-		self.DAC_Bias = .002 #Volts
+		self.DAC_Bias = .004 #Volts
 		self.Rb = 100000. #Ohms
 		self.df = 0.
 		self.f = 1.
@@ -62,7 +62,7 @@ class fridge_interface:
 
 		for device in self.device_list:
 			voltage = self.DAC.read_voltage(device.DAC_Port)
-			print('device {} has voltage set to {} V'.format(device.Name, voltage[0]))
+			print('device {} has voltage set to {} V'.format(device.Name, voltage))
 
 	def __del__(self):
 		if self.Verbose:
@@ -74,6 +74,12 @@ class fridge_interface:
 		else: 
 			self.DAC_Bias =  bias_voltage
 			print('Themometer bias set to {} V.'.format(bias_voltage))
+
+	def get_stack_heater_voltage(self):
+		Stack_Heater_Index = self.channel_name_to_index_dict['Stack_Heater']
+		voltage = self.DAC.read_voltage(self.device_list[Stack_Heater_Index].DAC_Port)
+		return voltage
+
 
 	def set_stack_heater_voltage(self,voltage):
 		#if self.stack_heater_index ==None:

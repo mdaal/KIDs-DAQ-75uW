@@ -49,7 +49,7 @@ if 0:
 		na = 'thi is na'
 		try:
 			print('before yield')
-			yield na, x
+			yield na, x # passes these two as  targets in the 'with nacontex(2) as n:' statement.  n is a tuple: n[0] is na and n[1] is x
 			print('after yield')
 		finally:
 	 		print('take down na')
@@ -130,6 +130,9 @@ if 1:
 	reload(Fridge_Interfaces)
 	devices = [('RuOx2','MF2'), ('Ge3', 'MF1'),('Ge4', 'MF3'), ('Stack_Heater_1','Stack_Heater'), ('Helmholtz_Coil', 'Aux')]
 	mm = Measurement_Managers.measurement_manager(devices, 'Run53ab')
+	import Data_Inspection
+	reload(Data_Inspection)
+	#di  = Data_Inspection.data_inspector('Run53ab')
 	#mm.single_scan('Survey.txt', 'Run_53ab_Data.h5')
 
 
@@ -139,6 +142,7 @@ if 0:
 	reload(Instruments)
 	import Fridge_Interfaces
 	reload(Fridge_Interfaces)
+
 	#fi = Fridge_Interfaces.fridge_interface([('U03746','MF2'), ('U30593', 'MF1'),('U30817', 'MF3')])
 	fi = Fridge_Interfaces.fridge_interface([('RuOx2','MF2'), ('Ge3', 'MF1'),('Ge4', 'MF3'), ('Stack_Heater_1','Stack_Heater'), ('Helmholtz_Coil', 'Aux')])
 	

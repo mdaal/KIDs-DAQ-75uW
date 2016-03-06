@@ -22,7 +22,11 @@ class measurement_manager:
 		self.Verbose = True
 		self.Show_Plots = True
 		self.devices = devices
-		self.inl = Instruments.Instrument_Name_List
+		inl = Instruments.Instrument_Name_List
+		self.na_address = inl.NETWORK_ANALYZER_E5071B
+		self.lna_psu_address = inl.POWER_SUPPLY_HPE3631A 
+		self.source_meter_address  = inl.SOURCE_METER_2612A
+		self.syn_address = inl.SYNTHESIZER_MG3692B
 		
 		
 		self.start_directory = os.getcwd()
@@ -31,7 +35,7 @@ class measurement_manager:
 		if os.path.exists(self.data_directory_path) == False:
 			logging.error('data directory path does no exist.')
 
-		self.measurement_metadata = {'Devices': devices}
+		self.measurement_metadata = {'Devices': devices, 'Device_Themometer_Channel': None}
 		self._read_about_file()
 
 		self.num_aux_sweep_pts   = 1
@@ -40,6 +44,7 @@ class measurement_manager:
 		self.num_temp_sweep_pts =  1
 		self.measurement_start_time = None  #datetime.datetime.now().strftime('%Y%m%d%H%M')
 		self.current_sweep_data_table = None #path within hdf5 file to current data table 
+		
 
 	def __del__(self):
 		pass
@@ -94,7 +99,6 @@ class measurement_manager:
 						proceed = 0
 		os.remove(file_path)
 		os.renames(tmp_file_path, file_path)
-
 
 	def _read_tokens_in_file(self, file_path, tokens):
 		'''
@@ -186,10 +190,17 @@ class measurement_manager:
 			("S21_Syn"            		, np.complex128, (fsteps_syn,)), # in complex numbers
 			("Frequencies_Syn"    		, np.float64,(fsteps_syn,)), # in Hz
 			("Noise_Spectrum"			, np.float64, (noise_spectrum_length,)), # V/sqrt(hz)
-			("Frequencies_Noise"    	, np.float64,(noise_spectrum_length,)), # in Hz, the  frequencies of the noise spectrum
+			
 			("Power_Baseline_Noise"    	, np.float64), # dBm -  off resonnce power entering digitizer for noise spectrum measurement
 			("On_Res_Noise_Freq"    	, np.float64), # Hz - freq at which on res noise was taken
 			("Off_Res_Noise_Freq"    	, np.float64), # Hz - freq at which off res noise was taken
+			("Noise_II_On_Res"			, np.float64(noise_spectrum_length,)),
+			("Noise_QQ_On_Res"			, np.float64(noise_spectrum_length,)),
+			("Noise_IQ_On_Res"			, np.complex128(noise_spectrum_length,)),
+			("Noise_Orth_A_On_Res"		, np.complex128(noise_spectrum_length,)),
+			("Noise_Orth_B_On_Res"		, np.complex128(noise_spectrum_length,)),
+			("Noise_Orth_Ang_On_Res"	, np.float64(noise_spectrum_length,)),
+			("Noise_Freq_Vector"    	, np.float64,(noise_spectrum_length,)), # in Hz, the  frequencies of the noise spectrum
 			#auto and cross correlated noise
 			#phase cancellation value for carrier cuppresion - np.float64,(fsteps_syn,)
 			#ampl cancellation value for carrir suppression -  np.float64,(fsteps_syn,)
@@ -245,7 +256,7 @@ class measurement_manager:
 		with tables.open_file(filename, mode = wmode, title = db_title ) as fileh:
 			try:
 				sweep_data_table = fileh.get_node(table_path)
-				self._print('Adding data to existing table {0} exists.'.format(table_path))
+				self._print('Adding data to existing table {0}'.format(table_path))
 			except:
 				self._print('Creating new table {0} and adding data.'.format(table_path))
 				sweep_data_table = fileh.create_table('/'+ group_name,sweep_data_table_name,description=self.sweep_data_columns,title = 'Sweep Data Table',filters=tables.Filters(0), createparents=True)
@@ -262,28 +273,28 @@ class measurement_manager:
 			sweep_data_table.attrs.keys =  self.measurement_metadata.keys() #NOTE: we record the metadata keys in the metadate
 			sweep_data_table.flush()
 		
-	def load_hf5(self, database_filename, tablepath):
-		''' table path is path to the database to be loaded starting from root. e.g. self.load_hf5('/Run44b/T201312102229')
-		database_filename is the name of the hf5 database to be accessed for the  table informaiton'''
-		database_filename = self.data_directory_path + os.sep+ database_filename
-		if not os.path.isfile(database_filename):
-			logging.error('Speficied h5 database does not exist. Aborting...')
-			return 
+	# def load_hf5(self, database_filename, tablepath):
+	# 	''' table path is path to the database to be loaded starting from root. e.g. self.load_hf5('/Run44b/T201312102229')
+	# 	database_filename is the name of the hf5 database to be accessed for the  table informaiton'''
+	# 	database_filename = self.data_directory_path + os.sep+ database_filename
+	# 	if not os.path.isfile(database_filename):
+	# 		logging.error('Speficied h5 database does not exist. Aborting...')
+	# 		return 
 		
-		wmode = 'a'
-		self.measurement_metadata = {} # Clear metadata
+	# 	wmode = 'a'
+	# 	self.measurement_metadata = {} # Clear metadata
 
-		# use "with" context manage to ensure file is always closed. no need for fileh.close()
-		with tables.open_file(database_filename, mode = wmode) as fileh:
-			table = fileh.get_node(tablepath)	
-			self.Sweep_Array = table.read()
-			for key in table.attrs.keys:
-				exec('self.measurement_metadata["{0}"] = table.attrs.{0}'.format(key))
+	# 	# use "with" context manage to ensure file is always closed. no need for fileh.close()
+	# 	with tables.open_file(database_filename, mode = wmode) as fileh:
+	# 		table = fileh.get_node(tablepath)	
+	# 		self.Sweep_Array = table.read()
+	# 		for key in table.attrs.keys:
+	# 			exec('self.measurement_metadata["{0}"] = table.attrs.{0}'.format(key))
 
-		self.sweep_data_columns = self.Sweep_Array.dtype
+	# 	self.sweep_data_columns = self.Sweep_Array.dtype
 
 	def _record_LNA_settings(self):
-		self.psu = Instruments.power_supply(self.inl.POWER_SUPPLY_HPE3631A)
+		self.psu = Instruments.power_supply(self.lna_psu_address)
 		try:
 			self.measurement_metadata['LNA'].update(Vg = self.psu.get_Vg(),
 													Vd = self.psu.get_Vd(), 
@@ -331,7 +342,7 @@ class measurement_manager:
 		def round_down(x):
 			return np.int(np.floor(x/min_number_of_na_scan_pts)) * min_number_of_na_scan_pts
 
-		self.na = Instruments.network_analyzer(self.inl.NETWORK_ANALYZER_E5071B)
+		self.na = Instruments.network_analyzer(self.na_address)
 		max_na_points_per_scan = np.float64(self.na.max_na_scan_points)
 		if  min_number_of_na_scan_pts >= min_num_scan_pts_req: 
 			num_points_per_na_scan = min_number_of_na_scan_pts
@@ -363,10 +374,14 @@ class measurement_manager:
 			if avg_fac  > 0:
 				self.na.turn_on_averaging(avg_fac, channel = 1)
 			self.na.query_sweep_time( update_timout = True)
-			#self.na.set_start_freq(self.Frequency_Range[0])
-			#self.na.set_stop_freq(self.Frequency_Range[1])
 			self.na.setup_single_scan_mode()
+			#####
+			#
+			#   Yield
+			#
+			#####
 			yield self.na 
+
 			if avg_fac  > 0:
 				self.na.turn_off_averaging(channel = 1)
 			self.na.setup_continuous_scan_mode( channel = 1)
@@ -425,6 +440,10 @@ class measurement_manager:
 		
 		self._read_tokens_in_file(sweep_parameter_file, tokens)
 
+		self.measurement_metadata['System_Calibration'] = None
+		self.measurement_metadata['Cable_Calibration'] = None
+		self.measurement_metadata['Electrical_Delay'] = None
+		sself.measurement_metadata['RTAmp'] = 'AML016P3411'
 		thermometer_channel_name = self.measurement_metadata['Device_Themometer_Channel']
 		num_temp_readings = self.measurement_metadata['Num_Temp_Readings'] 
 		self.Delay_Time = self.measurement_metadata.pop('Delay_Time')
@@ -537,8 +556,6 @@ class measurement_manager:
 											# ("Off_Res_Noise_Freq"    	, np.float64), # Hz - freq at which off res noise was taken
 
 						if self.Show_Plots: # issue '%matplotlib qt' in spyder?
-							#plt.rcParams["axes.titlesize"] = 10
-							#fig = plt.figure( figsize=(8, 6), dpi=100)
 							ax.clear()
 							
 							line = ax.plot(self.Sweep_Array[0]['Frequencies'],20*np.log10(np.abs(self.Sweep_Array[0]['S21'])),'b-',)
@@ -570,8 +587,18 @@ class measurement_manager:
 		#na.setup_continuous_scan_mode()
 		#del(self.na) # handeled in context manager
 
+
+	@contextlib.contextmanager
+	def _na_context(self):
+		self.na = Instruments.network_analyzer(self.na_address)
+		try:
+			yield self.na
+		finally:
+			del(self.na)
+			
+
 	def get_current_na_frequency_range(self):
-		self.na = Instruments.network_analyzer(self.inl.NETWORK_ANALYZER_E5071B)
+		self.na = Instruments.network_analyzer(self.na_address)
 		start = self.na.get_start_freq()
 		stop = self.na.get_stop_freq()
 		num_pts = np.float64(self.na.get_num_points_per_scan())
@@ -579,6 +606,96 @@ class measurement_manager:
 		freq_resolution = (stop - start)/num_pts
 		print('Start: {}    Stop: {}    Freq Resolution: {}'.format(start,stop, freq_resolution))
 
-[-55., -54., -53., -52., -51., -50., -49., -48., -47., -46., -45., -44., -43., -42., -41., -40., -39., -38., -37., -36., -35., -34.,-33., -32., -31., -30., -29., -28., -27., -26., -25., -24., -23., -22., -21., -20., -19., -18., -17., -16., -15., -14., -13., -12.,
-       -11., -10.,  -9.,  -8.,  -7.,  -6.,  -5.,  -4.,  -3.,  -2.,  -1.,
-         0.]
+	def pulse_stack_heater_voltage(self, voltage, time_seconds, return_voltage = None):
+		'''
+		set stack heater voltage to 'voltage' for a duration of 'time_seconds', 
+		then return to 'return_voltage' (if it not None) or to the voltage it was at before.
+		'''
+		self.fi = Fridge_Interfaces.fridge_interface(self.devices)
+		if return_voltage == None:
+			return_voltage = self.fi.get_stack_heater_voltage()	
+		self.fi.set_stack_heater_voltage(voltage)
+		time.sleep(time_seconds)
+		self.fi.set_stack_heater_voltage(return_voltage)
+		self.fi.suspend()
+		del(self.fi)
+
+	def read_temp(self):
+		'''
+		Read the temperature on the currently selected thermometer channel.
+		'''
+		thermometer_channel_name = self.measurement_metadata['Device_Themometer_Channel']
+		if thermometer_channel_name == None:
+			print('No thermometer channel is selected. Update metadate....')
+			return 
+		self.fi = Fridge_Interfaces.fridge_interface(self.devices)	
+		temp = self.fi.read_temp(thermometer_channel_name)
+		bias = self.fi.DAC_Bias
+		self.fi.suspend()
+		del(self.fi)
+		print('Temperature is {:.4f} K on channel {}, which is biased at {} V'.format(temp, thermometer_channel_name, bias))
+		return temp
+
+	def switch_to_noise_channel(self):
+		
+		
+		self.na = Instruments.network_analyzer(self.na_address)
+		try:
+			self.na.off()
+		finally:
+			del(self.na)
+
+		self.sm = Instruments.source_meter(self.source_meter_address)
+		try:
+			voltage = 28 # Volts
+			self.sm.set_voltage('a', voltage)
+			self.sm.set_voltage('b', voltage)
+
+			self.sm.on('a')
+			self.sm.on('b')
+		finally:
+			del(self.sm)
+
+		self.syn = Instruments.synthesizer(self.syn_address)
+		try:
+			self.syn.on()
+		finally:
+			del(self.syn)
+
+	def switch_to_na_channel(self):
+		
+		self.syn =
+		try:
+			#turn off Syn
+		finally:
+			del(self.syn)	
+
+		# now switch to na circuit
+		self.sm = Instruments.source_meter(self.source_meter_address)
+		try:
+			voltage = 0 # Volts
+			self.sm.set_voltage('a', voltage)
+			self.sm.set_voltage('b', voltage)
+
+			self.sm.off('a')
+			self.sm.off('b')
+		finally:
+			del(self.sm)
+
+		# self.na =
+		# try:
+		# 	#turn on na stimulus
+		# finally:
+		# 	del(self.na)
+
+
+
+
+	def _record_LNA_settings(self):
+		self.psu = Instruments.power_supply(self.lna_psu_address)
+		try:
+			self.measurement_metadata['LNA'].update(Vg = self.psu.get_Vg(),
+													Vd = self.psu.get_Vd(), 
+													Id = self.psu.get_Id()) 
+		finally:
+			del(self.psu)
