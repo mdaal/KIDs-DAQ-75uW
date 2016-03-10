@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 configuration_file =  "fridge_interface_configuration.py"
 
 class fridge_interface:
-	#def construct_configuration(self):
 	with open(configuration_file) as f:
 		code = compile(f.read(),configuration_file, 'exec')
 		exec(code)
@@ -33,7 +32,9 @@ class fridge_interface:
 		self.ADC= Instruments.fridge_ADC(self.inl.DIGITIZER_ADC488)
 		self.DAC = Instruments.fridge_DAC(self.inl.VOLTAGE_SOURCE_K213)
 
-		
+		self.mssg = Instruments.messaging() #for priting messgs neatly to screen
+		self.mssg.Verbose = True
+
 		self.thermometer_list = []
 		self.device_list = []
 		thermometer_list_index = 0 
@@ -62,18 +63,21 @@ class fridge_interface:
 
 		for device in self.device_list:
 			voltage = self.DAC.read_voltage(device.DAC_Port)
-			print('device {} has voltage set to {} V'.format(device.Name, voltage))
+			self._print('device {} has voltage set to {} V'.format(device.Name, voltage))
 
 	def __del__(self):
-		if self.Verbose:
-			print('Deleting Fridge_Interface object.' )
+			self._print('Deleting Fridge_Interface object.' )
+
+	def _print(self, mssg, nnl = False):
+		self.mssg._print(mssg, nnl = nnl)
+
 
 	def set_thermometer_bias_voltage(self, bias_voltage):
 		if np.abs(bias_voltage) > 0.2:
 			logging.warning('Attempt to set thermomter bias to {} V. Setting to 0.02 V instead.'.format(bias_voltage))
 		else: 
 			self.DAC_Bias =  bias_voltage
-			print('Themometer bias set to {} V.'.format(bias_voltage))
+			self._print('Themometer bias set to {} V.'.format(bias_voltage))
 
 	def get_stack_heater_voltage(self):
 		Stack_Heater_Index = self.channel_name_to_index_dict['Stack_Heater']
@@ -159,7 +163,7 @@ class fridge_interface:
 		num_readings = 200
 		values =  self.ADC.read_adc(fridge_interface.channel_config.MC1.ADC_V_Channel, 3,0, num_readings)
 		Temp = (values*10-0.03).mean() * 1000 #ohms
-		#print('Resistance is {}, corresponding to a temp of {}')
+		#self._print('Resistance is {}, corresponding to a temp of {}')
 		return Temp
 
 	def suspend(self):

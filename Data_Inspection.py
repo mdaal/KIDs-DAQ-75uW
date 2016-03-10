@@ -50,3 +50,27 @@ class data_inspector:
 			ax.grid()
 			plt.draw()
 			#plt.show()
+
+
+	def plot_noise(self, Plot_Off_Res = True):
+		plt.rcParams["axes.titlesize"] = 10
+		fig = plt.figure( figsize=(8, 6), dpi=100)
+		ax = fig.add_subplot(111)
+
+		line = ax.loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_II_On_Res'], label = 'PII On')
+		line = ax.loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_QQ_On_Res'], label = 'PQQ On')
+		line = ax.loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],np.abs(self.Sweep_Array[0]['Noise_IQ_On_Res']), label = 'PIQ On')
+		if Plot_Off_Res: 
+			line = ax.loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_II_Off_Res'], label = 'PII Off')
+			line = ax.loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_QQ_Off_Res'], label = 'PQQ Off')
+			line = ax.loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],np.abs(self.Sweep_Array[0]['Noise_IQ_Off_Res']), label = 'PIQ Off')
+
+
+		ax.set_xlabel('Frequency')
+		ax.set_ylabel('$V^2/Hz$')
+
+		ax.set_title(r'I and Q PSD, $f_{{noise}}$ = {fn:0.3f} MHz'.format(fn = self.Sweep_Array[0]['Noise_Freq_On_Res']/1e6))		
+		ax.legend(loc = 'best', fontsize = 6)
+		ax.grid(which='both')
+		ax.set_ylim(bottom = 8e-17)
+		plt.draw()

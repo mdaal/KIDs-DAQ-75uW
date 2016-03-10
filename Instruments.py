@@ -5,6 +5,7 @@ import logging
 import string
 import struct
 import PyDAQmx as pdmx # developed with version 1.3
+import sys
 
 class Instrument_Name_List:
 	NETWORK_ANALYZER_E5071B = 'TCPIP0::169.229.225.4::inst0::INSTR'
@@ -14,25 +15,63 @@ class Instrument_Name_List:
 	DIGITIZER_ADC488 = 'GPIB1::14::INSTR'
 	VOLTAGE_SOURCE_K213 = 'GPIB1::17::INSTR'
 	SOURCE_METER_2612A =  'GPIB0::26::INSTR'
+	DIGITIZER_NI6120 = 'NI6120'
+	ATTENUATOR_BOX_8310 = 'GPIB0::10::INSTR'
 
-	
+class messaging(object):
+	''' For neatly printing messages to the command line
+	'''
+	def __init__(self):
+		self.issue_new_line = False # does new line nees to be issued before the next message
+		self.Verbose = True # print messages if true
+	def _print(self, mssg, nnl = False):
+		'''
+		Print mssg if self.Verbose is True
+		nnl - no new line (carriage return on current line)
 
+		'''
+		
+		if self.Verbose:
+			if not nnl:
+				if not self.issue_new_line:
+					sys.stdout.write(mssg.ljust(75,'.') + '\n')
+					sys.stdout.flush()
+				else:
+				 	sys.stdout.write('\n' + mssg.ljust(75,'.')+ '\n')
+					sys.stdout.flush()
+					self.issue_new_line = False
+
+			
+			if nnl:
+				sys.stdout.write('\r' + mssg.ljust(75,'.'))
+				sys.stdout.flush()
+				self.issue_new_line = True
 
 class Instrument(object):
 	rm = visa.ResourceManager()
+	inl = Instrument_Name_List
 
 	def __init__(self, resource_name, Name = 'Instrument Superclass'):
 		#self.rm = visa.ResourceManager()
-		self.inst = Instrument.rm.open_resource(resource_name, open_timeout=0)
-		self.inst.timeout = 10000 # milliseconds
+		if resource_name is Instrument.inl.DIGITIZER_NI6120:
+			self.inst = pdmx.Task()
+		else:
+			self.inst = Instrument.rm.open_resource(resource_name, open_timeout=0)
+			self.inst.timeout = 10000 # milliseconds
+
 		self.resource_name = resource_name
 		self.Name = Name
-		self.Verbose = True
+		self.Verbose = False
 		if self.Verbose:
 			print('Instantiating {}'.format(self.Name))
 
 	def __del__(self):
-		self.inst.close()
+		'''
+		remember  the del() function calls __del__()
+		'''
+		if self.resource_name is not Instrument.inl.DIGITIZER_NI6120:
+			self.inst.close()
+		del(self.inst)
 		if self.Verbose:
 			print('Deleting {}'.format(self.Name))
 
@@ -40,6 +79,9 @@ class Instrument(object):
 		print('{} at {}'.format(self.Name, self.resource_name))
 
 	def list_resources(self):
+		'''
+		print oa list of all visa device addresses
+		'''
 		Instrument.rm.list_resources()
 
 	def identify(self):
@@ -81,12 +123,104 @@ class Instrument(object):
 					break
 				#stb = self.inst.read_stb()
 		#return stb
+	
 	def _wait_opc(self):
 		'''
 		Blocks command  line until opc == 1.0 is received from instrument. 
 		this  indicats that  the instrument is ready for the next command.
 		'''
 		self.inst.query_ascii_values('*OPC?;') # will equal 1.0 when instrument has completed operation
+
+class attenuator_box(Instrument):
+	def __init__(self, resource_name, Name = 'Attenuator Box'):
+		Instrument.__init__(self, resource_name, Name = Name)
+		self.atn_func = lambda a: (a//2)*2 # floors to factor of 2
+
+	def set_atn_chan(self,channel,attenuation):
+		'''
+		channel can be 1 or 2
+		attenuation can be 0 to 62, in steps of 2. Thus, a positive number
+		'''
+		if (attenuation <= 62) & (attenuation >= 0):
+			self.inst.write('CHAN {}'.format(channel))
+			self.inst.write('ATTN {}'.format(self.atn_func(attenuation)))
+		else:
+			logging.error('Attenuation value of of bounds.')
+
+class ni_digitizer(Instrument):
+	def __init__(self,resource_name, Name = 'NI6120 Digitizer'):
+		Instrument.__init__(self, resource_name, Name = Name)
+		self.read = pdmx.int32() # for sampsPerChanRead
+		
+		self.inputrange_max = 0.2 # can be 42, 20, 10, 5, 2, 1, 0.5, 0.2 Volts
+		self.inputrange_min = -1.0*self.inputrange_max
+		self.sample_rate = 8.0e5 # samples per second
+		self.timeout = 20.0 # seconds
+		self.samples_per_channel = 1e4 
+
+	def create_channel(self, channel = "Dev1/ai0:1"):
+		'''
+		Creates two channel by default
+		'''
+		self.channel = channel # physical channel(s)
+
+		self.inst.CreateAIVoltageChan(self.channel, "", 
+									pdmx.DAQmxConstants.DAQmx_Val_Cfg_Default, 
+									self.inputrange_min, self.inputrange_max, 
+									pdmx.DAQmxConstants.DAQmx_Val_Volts, None)
+
+	def configure_sampling(self, sample_rate = None, num_samples = None):
+		if sample_rate != None:
+			self.sample_rate = sample_rate
+
+		if num_samples != None:
+			self.samples_per_channel = num_samples
+
+		self.inst.CfgSampClkTiming("", np.int(self.sample_rate),
+									pdmx.DAQmxConstants.DAQmx_Val_Rising,
+									pdmx.DAQmxConstants.DAQmx_Val_FiniteSamps,
+									np.int(self.samples_per_channel))
+
+	def acquire_readings_2chan(self):
+		'''
+		returns the digitized readings for two channels.
+		these vectors are each of shape: (self.samples_per_channel,) and dtype =  np.float64
+		'''
+		data_vector = np.empty((np.int(self.samples_per_channel*2),), dtype = np.float64)
+		
+		self.inst.StartTask()
+
+		self.inst.ReadAnalogF64(np.int(self.samples_per_channel),self.timeout,
+								pdmx.DAQmxConstants.DAQmx_Val_GroupByChannel, #as opposed to DAQmx_Val_GroupByScanNumber
+								data_vector,
+								np.int(self.samples_per_channel*2),
+								pdmx.byref(self.read), # byref() Returns a pointer lookalike to a C instance
+								None)
+
+		self.inst.StopTask()
+
+		#self.inst.ClearTask() #deprecated bc garbage collection is supposed to handle this.
+
+		[AI0_readings, AI1_readings] = np.hsplit(data_vector, (np.int(self.samples_per_channel),))
+
+		return  AI0_readings,  AI1_readings
+
+	def enable_AA_filter(self):
+		'''
+		enable the built-in 5-pole Bessel 100kHz antialias filter of the NI6120 
+		'''
+		self.inst.SetAILowpassEnable("",1)
+
+	def disable_AA_filter(self):
+		'''
+		disable the built-in 5-pole Bessel 100kHz antialias filter of the NI6120 
+		'''
+		self.inst.SetAILowpassEnable("",0)
+
+
+
+
+
 	
 class source_meter(Instrument):
 	def __init__(self,resource_name, Name = 'Source Meter'):
@@ -359,7 +493,7 @@ class power_supply(Instrument):
 class synthesizer(Instrument):
 	def __init__(self,resource_name, Name = 'Synthesizer'):
 		Instrument.__init__(self, resource_name, Name = Name)
-		self.settle_time = 0.9 # Seconds    Is the time th  syn needs to be within 1KHz of set frequency
+		self.settle_time = 0.09 # Seconds    Is the time th  syn needs to be within 1KHz of set frequency
 
 		identification = self.identify()
 		if 'MG3692B' in identification: # Anritsu
@@ -382,6 +516,7 @@ class synthesizer(Instrument):
 			self.inst.write('XL0 {:f} DM LO'.format(power))		
 		elif self.model == 'E4425B':
 			self.inst.write(':POW:AMPL {:f} dBm'.format(power))	
+		time.sleep(self.settle_time)
 
 	def on(self):
 		if self.model == 'MG3692B':

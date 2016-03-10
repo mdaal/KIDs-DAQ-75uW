@@ -124,6 +124,8 @@ if 0:
 if 1:
 	import Measurement_Managers
 	reload(Measurement_Managers)
+	import KAM
+	reload(KAM)
 	import Instruments
 	reload(Instruments)
 	import Fridge_Interfaces
@@ -132,8 +134,10 @@ if 1:
 	mm = Measurement_Managers.measurement_manager(devices, 'Run53ab')
 	import Data_Inspection
 	reload(Data_Inspection)
-	#di  = Data_Inspection.data_inspector('Run53ab')
-	#mm.single_scan('Survey.txt', 'Run_53ab_Data.h5')
+	di  = Data_Inspection.data_inspector('Run53ab')
+	mm.execute_sweep('Sweep_Test.txt', 'Run_53ab_Data.h5')
+	# di.load_hf5('Run_53ab_Data.h5','/SweepN/T201603092312_SweepN')
+	# di.plot_noise(Plot_Off_Res = True)
 
 
 
