@@ -9,7 +9,6 @@ import tables
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import contextlib
-import fractions
 import KAM
 
 
@@ -49,10 +48,12 @@ class measurement_manager:
 		self.measurement_metadata = {'Devices': devices, 'Device_Themometer_Channel': None}
 		self.measurement_metadata['Synthesizer_Scan_Num_BW'] = 8
 		self.measurement_metadata['Synthesizer_Scan_Power'] = 16 
-		self.measurement_metadata['Synthesizer_Frequency_Spacing'] = 'Linear' #The LO power of the syn used for all syn sweep points
+		self.measurement_metadata['Synthesizer_Frequency_Spacing'] = 'Triangular' #The LO power of the syn used for all syn sweep points
 		#self.total_attenuation = 62 # sum of chan 1 (input to fridge) and chan 2 (output of fridge) attenuator box 
 		self.measurement_metadata['IQ_Sample_Rate'] = 8.0e5
+		self.measurement_metadata['IQ_Num_Samples'] = 2e4 
 		self.bkgd_loop_num_pts = 10
+		self.bkgd_BW  = 10.e6
 		self.measurement_metadata['Noise_Sample_Rate'] = noise_sampling_rate = 8.0e5
 		self.measurement_metadata['Noise_Decimation_Factor'] = decimation_factor =  4.	
 		decimated_noise_sampleing_rate = noise_sampling_rate/decimation_factor
@@ -61,8 +62,14 @@ class measurement_manager:
 		self.measurement_metadata['Noise_Frequency_Segmentation'] =[100., 5000., decimated_noise_sampleing_rate/2.0]
 		self.measurement_metadata['Noise_Frequency_Resolution_Per_Segment'] = [1., 10., 100.]
 		self.measurement_metadata['Off_Res_Freq_Offset'] = 3e6 # Hertz
+		self.measurement_metadata['Noise_Hrdwr_AA_Filt_In_Use'] = True
 		#NOTE: noise_spectrum_length = noise_sample_rate * noise_integration_time *0.1 / noise_decimation_factor
 		#      Must be an integer 
+
+
+		self.pow_scan_num_points = 300 # Number of points to use for the power scan calibration. keep between 10 and 1601
+		self.pow_scan_IFBW = 20 # IF bandwidth to use for power scan. 
+		self.pow_scan_freq_offset = 300e6 # Hertz. power calibration data is taken at the stop freq of the sweep + pow_scan_freq_offset. If sweep has a BW > 10 MH, power  calibration is taken the center of the band.
 
 		self.measurement_metadata['System_Calibration'] = None
 		self.measurement_metadata['Cable_Calibration'] = None
@@ -80,22 +87,110 @@ class measurement_manager:
 		
 		self.min_syn_freq_points = 25
 
+		self.na_settings = {'Settings_Recorded': False} # the na settings at the start of the measurement
+
 
 	def __del__(self):
 		pass
 
 
 	def _restore_na_settings(self):
-			'''
-			Must be executed within _na_ctx()
-			'''
-			if self.measurement_metadata['NA_Average_Factor']  > 0:
-				self.na.turn_off_averaging(channel = 1)
-			self.na.setup_continuous_scan_mode( channel = 1)
+		'''
+		Must be executed within _na_ctx()
+		'''
+		for setting in self.na_settings.values():
+			setting[1](setting[0]) if type(setting) == tuple else None
+
+		# if self.measurement_metadata['NA_Average_Factor']  > 0:
+		# 	self.na.turn_off_averaging(channel = 1)
+		self.na.setup_continuous_scan_mode( channel = 1)
+		#self.na.auto_scale(channel = 1, trace = 1)
+
+	def _record_na_settings(self):
+		'''
+		Must be executed within _na_ctx()
+		'''
+		self.na_settings['IFBW'] = (self.na.get_IFBW(), self.na.set_IFBW)
+		self.na_settings['Sweep_Type'] = (self.na.get_sweep_type(), self.na.set_sweep_type)
+		self.na_settings['Power'] =  (self.na.get_power(), self.na.set_power)
+		self.na_settings['Scan_Num_Pts']  = (self.na.get_num_points_per_scan(), self.na.set_num_points_per_scan)
+		self.na_settings['Start_Freq'] = (self.na.get_start_freq(), self.na.set_start_freq)
+		self.na_settings['Stop_Freq'] = (self.na.get_stop_freq(), self.na.set_stop_freq)
+		self.na_settings['Start_Power'] = (self.na.get_start_power(), self.na.set_start_power)
+		self.na_settings['Stop_Power'] = (self.na.get_stop_power(), self.na.set_stop_power)
+		self.na_settings['Averaging_Count'] = (self.na.get_averaging_count(), lambda count: None)
+		self.na_settings['Averaging_state'] = (self.na.get_averaging_state(), lambda state: self.na.turn_on_averaging(self.na_settings['Averaging_Count'][0]) if state == '1' else self.na.turn_off_averaging())
+
+	#def _read_power_scan_data(self):
+
+	def _perform_na_power_scan_calibration(self,cw_freq_Hz = None, stop_power_dBm = None):
+		'''
+		Measure S21 at a single CW frequency while ramping power from the minimum na power 
+		to the maximim specified na power for the current measurement/sweep. 
+		'''
+		
+		if cw_freq_Hz == None:
+			if np.abs(self.measurement_metadata['Frequency_Range'][1] - self.measurement_metadata['Frequency_Range'][0]) > 10e6:
+				cw_freq =  (self.measurement_metadata['Frequency_Range'][1] + self.measurement_metadata['Frequency_Range'][0])*0.5
+			else:
+				cw_freq = self.measurement_metadata['Frequency_Range'][1] + self.pow_scan_freq_offset
+		else: 
+			cw_freq = cw_freq_Hz
+
+
+		
+		stop_power = np.array(self.Powers, dtype = np.float64).max() if stop_power_dBm == None else stop_power_dBm
+		pow_scan_num_points = self.pow_scan_num_points
+		pow_scan_IFBW = self.pow_scan_IFBW
+
+		with self._na_ctx():
+			start_power = self.na.min_power_output
+			if np.abs(start_power - stop_power) > 0:
+				self._print('Measuring power calibration data')
+			elif start_power > stop_power:
+				self._print('Power calibration start power must be less than stop power.')
+			else: 
+				self._print('Skipping power calibration measurement: Sweep power is minimum NA power.')
+				self.measurement_metadata['Power_Calibration'] = {}
+				return
+			self.na.set_sweep_type(sweep_type  = 'POW')
+			self.na.set_CW_freq( cw_freq)
+			self.na.set_start_power(start_power, channel = 1)
+			self.na.set_stop_power(stop_power, channel = 1)
+			self.na.set_num_points_per_scan(pow_scan_num_points)
+			self.na.set_IFBW(pow_scan_IFBW)
+			#if we want to average in the future...
+			avg_fac = 0
+			if avg_fac  > 0:
+				self.na.turn_on_averaging(avg_fac, channel = 1)
+
+			self.na.query_sweep_time( update_timout = True)
+			self.na.setup_single_scan_mode()
+			self.na.trigger_single_scan()
+			self.na.auto_scale(channel = 1, trace = 1)
+			p, s21 = self.na.read_scan_data()
+
+		#Cannot find a function that makes the E5071B report the powers!
+		powers = np.linspace(start_power, stop_power, num = pow_scan_num_points, endpoint = True)
+
+		self.measurement_metadata['Power_Calibration'] = {
+															'CW_Freq' : cw_freq,
+															'Powers'  : list(powers),
+															'S21_Pow' : list(s21),
+															'IFBW_Pow': pow_scan_IFBW
+															}
+
+		return powers, s21
+
+
 
 	@contextlib.contextmanager
 	def _na_ctx(self):
 		self.na = Instruments.network_analyzer(self.na_address)
+		if self.na_settings['Settings_Recorded'] == False:
+			self._record_na_settings()
+			self.na_settings['Settings_Recorded'] = True
+
 		try:
 			yield self.na
 		except: #Return na to continuous scan mode and raise error
@@ -330,9 +425,11 @@ class measurement_manager:
 			("Bkgd_S21_Syn"            	, np.complex128, (bkgd_loop_num_pts,)), # in complex numbers
 			("Q"						, np.float64),
 			("Qc"						, np.float64),
-			("Fr"						, np.float64), # in Hz
+			("Fr"						, np.float64), # in Hz - Res freq estimated from na scan
 			("Power_Baseline_Noise"    	, np.float64), # dBm -  off resonnce power entering digitizer for noise spectrum measurement		
 			("Noise_Freq_On_Res"    	, np.float64), # Hz - freq at which on res noise was taken
+			("Noise_S21_On_Res"         , np.complex128), # The I/Q point at which on res noise was taken
+			("Noise_S21_Std_On_Res"     , np.complex128), # The standard deviation in the measurement of the I/Q point at which on res noise was taken
 			("Noise_II_On_Res"			, np.float64,(noise_spectrum_length,)), # PSD in V^2/Hz
 			("Noise_QQ_On_Res"			, np.float64,(noise_spectrum_length,)),
 			("Noise_IQ_On_Res"			, np.complex128,(noise_spectrum_length,)),
@@ -340,10 +437,11 @@ class measurement_manager:
 			("Noise_II_Off_Res"			, np.float64,(noise_spectrum_length_off_res,)),
 			("Noise_QQ_Off_Res"			, np.float64,(noise_spectrum_length_off_res,)),
 			("Noise_IQ_Off_Res"			, np.complex128,(noise_spectrum_length_off_res,)),
+			("Noise_S21_Off_Res"        , np.complex128), # The I/Q point at which off res noise was taken
+			("Noise_S21_Std_Off_Res"    , np.complex128), # The standard deviation in the measurement of the I/Q point at which off res noise was taken
 			("Noise_Freq_Vector"    	, np.float64,(noise_spectrum_length,)), # in Hz, the  frequencies of the noise spectrum
-			("Noise_Chan_Input_Atn"		, np.uint32), # attenuator box attenuation value on input side of fridge
-			("Noise_Chan_Output_Atn"	, np.uint32), # attenuator box attenuation value on output side of fridge
-			#auto and cross correlated noise
+			("Noise_Chan_Input_Atn"		, np.uint32), # attenuator box attenuation value on input side of fridge (Atn Box Chan 1)
+			("Noise_Chan_Output_Atn"	, np.uint32), # attenuator box attenuation value on output side of fridge (Atn Box Chan2)
 			#phase cancellation value for carrier cuppresion - np.float64,(fsteps_syn,)
 			#ampl cancellation value for carrir suppression -  np.float64,(fsteps_syn,)
 			("Scan_Timestamp"			, '|S12'),
@@ -462,13 +560,11 @@ class measurement_manager:
 				self.na.set_start_freq(model_freq_array[num_points_per_na_scan*i])
 				self.na.set_stop_freq(model_freq_array[num_points_per_na_scan*(i+1)-1])			
 				self.na.trigger_single_scan()
+				#self.na.auto_scale(channel = 1, trace = 1) # takes additional time to scale after each scan
 				frequencies, s_parameters = self.na.read_scan_data()
 				self.Sweep_Array[0]['Frequencies'][num_points_per_na_scan*i: num_points_per_na_scan*(i+1)] = frequencies
 				self.Sweep_Array[0]['S21'][num_points_per_na_scan*i: num_points_per_na_scan*(i+1)] = s_parameters
 			del(model_freq_array)
-
-	
-
 
 	def _setup_na_for_scans(self):
 		'''
@@ -484,7 +580,25 @@ class measurement_manager:
 		scan_bw = self.scan_bw
 		min_num_scan_pts_req = np.int(np.ceil(scan_bw/min_resolution))
 
-		
+		#Prime factorization algorithm from Rosetta code
+		try: 
+			long
+		except NameError: 
+			long = int
+		def factor(n):
+			'''
+			Returns the prime factorization of n as a list
+			'''
+			from math import floor, sqrt
+			step = lambda x: 1 + (x<<2) - ((x>>1)<<1)
+			maxq = long(floor(sqrt(n)))
+			d = 1
+			q = n % 2 == 0 and 2 or 3 
+			while q <= maxq and n % q != 0:
+				q = step(d)
+				d += 1
+			return q <= maxq and [q] + factor(n//q) or [n]
+
 		def round_up(x):
 			return np.int(np.ceil(x/min_number_of_na_scan_pts)) * min_number_of_na_scan_pts
 
@@ -503,8 +617,14 @@ class measurement_manager:
 				num_sub_scans = 1
 			else: 
 				num_f_steps = round_up(min_num_scan_pts_req)
-				num_points_per_na_scan = fractions.gcd(round_down(max_na_points_per_scan), num_f_steps)
-				num_sub_scans = np.int(num_f_steps/np.float64(num_points_per_na_scan))
+				if 0: #the precise way, minimizes num_f_steps but does not minimize num_sub_scans -> slower
+					cum_prod_of_factors = np.cumprod(factor(num_f_steps)[::-1])
+					num_points_per_na_scan  = cum_prod_of_factors[cum_prod_of_factors<=max_na_points_per_scan ][-1]
+					num_sub_scans = np.int(num_f_steps/num_points_per_na_scan)
+				if 1: #the fastest  way, use max_na_num_pts per scan, an add points to num_f_steps if necessary
+					num_points_per_na_scan = max_na_points_per_scan
+					num_sub_scans = np.int(np.ceil(num_f_steps/ num_points_per_na_scan))
+					num_f_steps = num_points_per_na_scan * num_sub_scans
 				self._print('Total num freq pts: {}. Number pts per scan {}. Number of scans {}'.format(num_f_steps,num_points_per_na_scan,num_sub_scans ))
 
 			sub_scan_width = (scan_bw/num_f_steps)*num_points_per_na_scan
@@ -515,12 +635,13 @@ class measurement_manager:
 										tpoints = self.measurement_metadata['Num_Temp_Readings'],
 										fsteps_syn = self.num_syn_freq_points
 										)
-			
+			self.na.set_sweep_type(sweep_type  = 'LIN') # put in linear freq sweep mode
 			self.na.set_num_points_per_scan(num_points_per_na_scan)
 			self.na.set_IFBW(IFBW)
 			if avg_fac  > 0:
 				self.na.turn_on_averaging(avg_fac, channel = 1)
 			self.na.query_sweep_time( update_timout = True)
+			
 			self.na.setup_single_scan_mode()
 
 	def execute_sweep(self, sweep_parameter_file, database_filename, use_table = None, End_Heater_Voltage = None):
@@ -568,7 +689,7 @@ class measurement_manager:
 					('Frequency_Range:','Frequency_Range',eval), ('Delay_Time:','Delay_Time',np.float),
 					('Device_Themometer_Channel:', 'Device_Themometer_Channel',str), ('Num_Temp_Readings:','Num_Temp_Readings',np.int),
 					('Atten_Mixer_Input:', 'Atten_Mixer_Input', np.int), ('Measure_On_Res_Noise:', 'Measure_On_Res_Noise', eval),
-					('Measure_Off_Res_Noise:', 'Measure_Off_Res_Noise', eval )] #dont use bool or np.bool because bool('False') = True!. Use eval 
+					('Measure_Off_Res_Noise:', 'Measure_Off_Res_Noise', eval ), ('Remarks:', 'Measurement_Remarks', str)] #dont use bool or np.bool because bool('False') = True!. Use eval 
 		
 		self._read_tokens_in_file(sweep_parameter_file, tokens)
 
@@ -578,6 +699,7 @@ class measurement_manager:
 		self.Delay_Time = self.measurement_metadata.pop('Delay_Time')
 		self.Aux_Voltage = self.measurement_metadata.pop('Aux_Voltage')
 		self.Powers = self.measurement_metadata.pop('Powers')
+		self.Powers[0]
 		self.Heater_Voltage = self.measurement_metadata.pop('Heater_Voltage')
 		self.Thermometer_Voltage_Bias = self.measurement_metadata.pop('Thermometer_Voltage_Bias')
 		#self.Frequency_Range  =  self.measurement_metadata.pop('Frequency_Range')
@@ -632,6 +754,7 @@ class measurement_manager:
 			plt.show()
 			#plt.draw()
 		
+
 		self._setup_na_for_scans()
 
 		with self._fi_ctx():
@@ -735,7 +858,7 @@ class measurement_manager:
 														)
 							
 							
-							self.swp.fill_sweep_array(Fit_Resonances = True, Compute_Preadout = False, Add_Temperatures = False, Complete_Fit = False, Remove_Gain_Compression = False )
+							self.swp.fill_sweep_array(Fit_Resonances = True, Compute_Preadout = False, Add_Temperatures = False, Complete_Fit = False, Remove_Gain_Compression = False, Verbose = False )
 							self.swp.pick_loop(0)
 							
 							if self.swp.Sweep_Array[0]['Is_Valid']:
@@ -768,7 +891,9 @@ class measurement_manager:
 		self._update_file(sweep_parameter_file, update_token, self.current_sweep_data_table)
 		self.current_sweep_data_table = None
 		
-		with self._na_ctx():
+		self._perform_na_power_scan_calibration()
+
+		with self._na_ctx():			
 			self._restore_na_settings()
 
 		if  End_Heater_Voltage != None:
@@ -931,12 +1056,14 @@ class measurement_manager:
 
 			#setup NI digitizer
 			self.iqd.create_channel()
-			self.iqd.configure_sampling(sample_rate = self.measurement_metadata['IQ_Sample_Rate'])
-			
+			self._configure_iqd_sampling(sample_rate = self.measurement_metadata['IQ_Sample_Rate'],
+										num_samples = self.measurement_metadata['IQ_Num_Samples'],  #If AA filter is no used, I and Q (as determined by median) will be systematically higher in comparison to when it is used.
+										use_AA_filt = True ) 
+
 			#first measure background loop
 			self._print('Measuring background loop')
-			bkgd_BW = 10e6
-			bkgd_freqs = np.linspace(self.Sweep_Array[0]['Frequencies'][0], self.Sweep_Array[0]['Frequencies'][0] + bkgd_BW , num= self.bkgd_loop_num_pts, endpoint=True, retstep=False, dtype=np.float64)
+			bkgd_BW = self.bkgd_BW
+			bkgd_freqs = np.linspace(self.Sweep_Array[0]['Frequencies'][0] - bkgd_BW*0.5, self.Sweep_Array[0]['Frequencies'][0] + bkgd_BW*0.5 , num= self.bkgd_loop_num_pts, endpoint=True, retstep=False, dtype=np.float64)
 			s21_bkgd = np.empty_like(bkgd_freqs, dtype = np.complex128)
 			for n in xrange(self.bkgd_loop_num_pts):
 				self._print('Synthesizer point {} of {}'.format(n+1, self.bkgd_loop_num_pts), nnl= True)
@@ -969,8 +1096,8 @@ class measurement_manager:
 				self.ax[2].clear()
 
 				line = self.ax[2].plot(self.Sweep_Array[0]['S21_Syn'].real,self.Sweep_Array[0]['S21_Syn'].imag)
-				self.ax[2].set_xlabel('Frequency [Hz]')
-				self.ax[2].set_ylabel('$20*Log_{{10}}[|S_{{21}}|]$ [dB]')
+				self.ax[2].set_xlabel('I')
+				self.ax[2].set_ylabel('Q')
 				self.ax[2].set_title( r'Syn Scan, $f_{{ctr}}$' + ' = {freq:0.3f} MHz, Q = {Qt:0.0f}k'.format(freq = f_center/1.e6, Qt = Q_center/1.e3))		
 				#ax.legend(loc = 'best', fontsize = 9)
 				self.ax[2].grid()
@@ -993,7 +1120,7 @@ class measurement_manager:
 										Is_Valid = True 
 										)
 			#self.swp.pick_loop(0)
-			self.swp.fill_sweep_array(Fit_Resonances = True, Compute_Preadout = False, Add_Temperatures = False, Complete_Fit = False, Remove_Gain_Compression = False )
+			self.swp.fill_sweep_array(Fit_Resonances = True, Compute_Preadout = False, Add_Temperatures = False, Complete_Fit = False, Remove_Gain_Compression = False, Verbose = False )
 			f_noise = self.swp.Sweep_Array[0]['Fr']
 
 			######
@@ -1005,17 +1132,20 @@ class measurement_manager:
 			######			
 			if self.swp.Sweep_Array[0]['Is_Valid'] & self.measurement_metadata['Measure_On_Res_Noise']:
 				self.syn.set_freq(f_noise)
-				time.sleep(1)
+				time.sleep(5) # extra pause for synthesizer freq stability
 				# print('disconnect cables now')
 				# time.sleep(40)
 				self._print('Measuring on resonance noise')
-				PII, PQQ, PIQ, f  = self._measure_noise()
+				PII, PQQ, PIQ, f, Ip, Qp, Istd, Qstd = self._measure_noise()
 				self._define_sweep_array(   0,
 											Noise_Freq_On_Res   = f_noise,
 											Noise_II_On_Res     = PII,
 											Noise_QQ_On_Res     = PQQ,
 											Noise_IQ_On_Res     = PIQ,
-											Noise_Freq_Vector   = f    )
+											Noise_Freq_Vector   = f,
+											Noise_S21_On_Res    = Ip + 1j*Qp,
+											Noise_S21_Std_On_Res= Istd + 1j*Qstd
+											)
 				
 				######
 				#
@@ -1028,12 +1158,15 @@ class measurement_manager:
 					self.syn.set_freq(f_noise)
 					time.sleep(1)
 					self._print('Measuring off resonance noise')
-					PII, PQQ, PIQ, f  = self._measure_noise()
+					PII, PQQ, PIQ, f, Ip, Qp, Istd, Qstd  = self._measure_noise()
 					self._define_sweep_array(   0,
 												Noise_Freq_Off_Res   = f_noise,
 												Noise_II_Off_Res     = PII,
 												Noise_QQ_Off_Res     = PQQ,
-												Noise_IQ_Off_Res     = PIQ)
+												Noise_IQ_Off_Res     = PIQ,
+												Noise_S21_Off_Res    = Ip + 1j*Qp,
+												Noise_S21_Std_Off_Res=  Istd + 1j*Qstd
+												)
 
 				if self.Show_Plots: # issue '%matplotlib qt' in spyder?
 					self.ax[3].clear()
@@ -1049,6 +1182,13 @@ class measurement_manager:
 					self.ax[3].set_xlabel('Frequency')
 					self.ax[3].set_ylabel('$V^2/Hz$')
 
+					#draw the point at which noise is take on ax[2] and put a circle of diameter  1*sigma about that point 
+					Ip_on_res = self.Sweep_Array[0]['Noise_S21_On_Res'].real
+					Qp_on_res = self.Sweep_Array[0]['Noise_S21_On_Res'].imag
+					circle = plt.Circle((Ip_on_res,Qp_on_res),np.abs(self.Sweep_Array[0]['Noise_S21_Std_On_Res'])*0.5, color = 'y', fill = False, linestyle = 'dashed', clip_on = True, label = 'within 1 sigma' )
+					self.ax[2].add_artist(circle)
+					point = self.ax[2].plot(Ip_on_res,Qp_on_res, 'y*', label = 'noise point')
+
 					self.ax[3].set_title(r'I and Q PSD, $f_{{noise}}$ = {fn:0.3f} MHz'.format(fn = f_noise/1e6))		
 					self.ax[3].legend(loc = 'best', fontsize = 6)
 					self.ax[3].grid(which='both')
@@ -1058,7 +1198,31 @@ class measurement_manager:
 					#plt.show()
 			else:
 				self._print('Unable to fit synthesizer scan')
-											
+	
+	def _configure_iqd_sampling(self, **configs):
+		'''
+			Configure the timeing, number of samples, and enable/disable of the iqd hardware AA filter.
+
+			Use only within _iqd_ctx() context manager
+			
+			Possible keywords:
+				'sample_rate'
+				'num_samples'
+				'use_AA_filt'
+		'''
+
+		iqd_config_kwarg = {}
+		iqd_config_kwarg.update([(k,configs[k]) for k in ['sample_rate', 'num_samples'] if k in configs.keys()] )
+		self.iqd.configure_sampling(**iqd_config_kwarg)
+		
+		if ('use_AA_filt' in configs) & (configs['use_AA_filt'] == True):
+			self.iqd.enable_AA_filter()
+			
+		else: 
+			self.iqd.disable_AA_filter()
+			
+		#self.iqd.configure_sampling(sample_rate = self.measurement_metadata['IQ_Sample_Rate'])
+
 	def _measure_noise(self):
 		'''
 		Takes noise at current synthesizer frequency, and attenuator/power settings.  If hardware AA filter is desired, 
@@ -1066,30 +1230,41 @@ class measurement_manager:
 
 		Takes num_integrations, each of duration integration_time, for a total integration time of 
 		integration_time * num_integrations.
+
+		Returns:
+			PII : auto-PSD for I channel (the in-phase channel)
+			PQQ : auto-PSD for Q channel (the quadrature channel)
+			PIQ : cross-PSD for I and Q channel
+			f   : The PSQ frequency vector
+			Ip  : the median I-value at the freq where the PSD is taken
+			Qp  : the median Q-value at the freq where the PSD is taken
+
 		'''
 		decimation_factor = self.measurement_metadata['Noise_Decimation_Factor']
 		integration_time = self.measurement_metadata['Noise_Integration_Time'] # second
 		num_integrations = self.measurement_metadata['Noise_Num_Integrations']*1.0
 		noise_sample_rate = self.measurement_metadata['Noise_Sample_Rate'] 
-		num_samples = noise_sample_rate * integration_time
+		noise_num_samples = noise_sample_rate * integration_time
 
 		#Recongifure NI digitizer
-		self.iqd.configure_sampling(sample_rate = noise_sample_rate, num_samples = num_samples)
-
-		# PII = np.array([], dtype = np.float64)
-		# PQQ = np.array([], dtype = np.float64)
-		# PIQ = np.array([], dtype = np.complex128)
+		self._configure_iqd_sampling(sample_rate =noise_sample_rate, num_samples = noise_num_samples, use_AA_filt = self.measurement_metadata['Noise_Hrdwr_AA_Filt_In_Use'] )
+		
 		for n in np.arange(num_integrations):
 			self._print('Noise integration {} of {}'.format(n+1, num_integrations), nnl= True)
-			In , Qn  = self.iqd.acquire_readings_2chan()
-			In = In - In.mean()
-			Qn = Qn - Qn.mean()
+			Inn , Qnn  = self.iqd.acquire_readings_2chan()
+			In = Inn - Inn.mean()
+			Qn = Qnn - Qnn.mean()
 			
 			PIIn, PQQn, PIQn, f = self._compute_PSD(In, Qn)
 			if n == 0:
 				PII = PIIn
 				PQQ = PQQn
 				PIQ = PIQn
+				Ip = np.median(Inn)
+				Qp = np.median(Qnn)
+				Istd = Inn.std()
+				Qstd = Qnn.std()
+
 			else:
 				PII = PII + PIIn
 				PQQ = PQQ + PQQn
@@ -1098,9 +1273,9 @@ class measurement_manager:
 		PII = PII/num_integrations
 		PQQ = PQQ/num_integrations
 		PIQ = PIQ/num_integrations
-		return PII, PQQ, PIQ, f		
+		return PII, PQQ, PIQ, f, Ip, Qp, Istd, Qstd 		
 
-	def _compute_PSD(self, I, Q): #, sampling_rate, decimation_factor):
+	def _compute_PSD(self, I, Q): 
 		'''
 		I and Q are time series in the format of numpy arrays.
 
@@ -1119,8 +1294,6 @@ class measurement_manager:
 		if I.shape != Q.shape: #make sure I and Q are the same shape
 			logging.error('I and Q time series must be the same size.  Aborting')
 			return
-		# frequency_segmentation = self.[100., 5000., sampling_rate_decimated/2.0]
-		# frequency_resolution_per_segment = [1., 10., 100.]
 		
 		frequency_segmentation = self.measurement_metadata['Noise_Frequency_Segmentation'] 
 		frequency_resolution_per_segment = self.measurement_metadata['Noise_Frequency_Resolution_Per_Segment'] 
@@ -1129,13 +1302,9 @@ class measurement_manager:
 		Q = signal.decimate(Q, int(decimation_factor))
 		
 		num_points = I.size
-		
-		#df = sampling_rate_decimated*1.0/num_points
 		fmin = 0.0
 		
 
-		#segpts = [200000,20000,2000,]
-		#[2**18, 2**15,2**11 ]
 		f =   np.array([], dtype = np.float64)
 		PII = np.array([], dtype = np.float64)
 		PQQ = np.array([], dtype = np.float64)
@@ -1148,12 +1317,7 @@ class measurement_manager:
 			hann_window = signal.get_window('hann',num_pts_in_segment, fftbins=False) #fftbins=True -> periodic window
 			#num_pts_overlap = np.floor(num_pts_in_segment * overlap_factor)
 		
-			# #Compute PSD
-			# fIm, PIIm  = signal.welch(I, fs=sampling_rate_decimated, window='hann', nperseg=num_pts_in_segment, noverlap=0, nfft=None, detrend='constant', return_onesided=False, scaling='density', axis=-1)
-			# fQm, PQQm  = signal.welch(Q, fs=sampling_rate_decimated, window='hann', nperseg=num_pts_in_segment, noverlap=0, nfft=None, detrend='constant', return_onesided=False, scaling='density', axis=-1)
-			# #Compute cross PSD
-			# fIQm,PIQm  = signal.csd(I, Q, fs=sampling_rate_decimated, window='hann', nperseg=num_pts_in_segment, noverlap=0, nfft=None, detrend='constant', return_onesided=False, scaling='density', axis=-1)
-						#Compute PSD
+			#Compute PSD
 			fIm, PIIm  = signal.welch(I, fs=sampling_rate_decimated, window=hann_window, nperseg=num_pts_in_segment, noverlap=0, nfft=num_pts_in_segment, detrend='constant', return_onesided=False, scaling='density', axis=-1)
 			fQm, PQQm  = signal.welch(Q, fs=sampling_rate_decimated, window=hann_window, nperseg=num_pts_in_segment, noverlap=0, nfft=num_pts_in_segment, detrend='constant', return_onesided=False, scaling='density', axis=-1)
 			#Compute cross PSD

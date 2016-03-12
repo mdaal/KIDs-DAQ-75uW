@@ -1,4 +1,5 @@
 if 0:
+	import numpy as np
 	import Instruments
 	reload(Instruments)
 	na = Instruments.network_analyzer('TCPIP0::169.229.225.4::inst0::INSTR')
@@ -6,8 +7,19 @@ if 0:
 	#syn =  Instruments.synthesizer('GPIB0::7::INSTR')
 	#ADC = Instruments.fridge_ADC('GPIB1::14::INSTR')
 	#DAC = Instruments.fridge_DAC('GPIB1::17::INSTR')
-
-
+	cw_freq_Hz = 717e6
+	start_power_dBm = -50
+	stop_power_dBm = -10
+	na.set_sweep_type(sweep_type  = 'POW')
+	na.set_CW_freq( cw_freq_Hz)
+	na.set_start_power(start_power_dBm, channel = 1)
+	na.set_stop_power(stop_power_dBm, channel = 1)
+	na.set_num_points_per_scan(300)
+	na.setup_single_scan_mode()
+	na.trigger_single_scan()
+	na.inst.write(':FORM:DATA REAL;')
+	pows = na.inst.query_binary_values(':CALC1:TRACE1:DATA:POW?;', datatype='d', is_big_endian=True, container = np.array)
+	#s21 = na.inst.query_binary_values(':CALC1:TRACE1:DATA:FDAT?;', datatype='d', is_big_endian=True, container = np.array)
 if 0:
 	import fractions 
 	import numpy as np
@@ -135,11 +147,15 @@ if 1:
 	import Data_Inspection
 	reload(Data_Inspection)
 	di  = Data_Inspection.data_inspector('Run53ab')
-	mm.execute_sweep('Sweep_Test.txt', 'Run_53ab_Data.h5')
-	# di.load_hf5('Run_53ab_Data.h5','/SweepN/T201603092312_SweepN')
+	mm.execute_sweep('Survey.txt', 'Run_53ab_Data.h5')
+	
+	#mm.execute_sweep('Sweep_Test.txt', 'Run_53ab_Data_Test.h5')
+	
+	# di.load_hf5('Run_53ab_Data_Test.h5','/SweepN/T201603092312_SweepN')
 	# di.plot_noise(Plot_Off_Res = True)
 
-
+	# with mm._na_ctx():
+	# 	 mm._perform_na_power_scan_calibration()
 
 if 0:
 	import Instruments
@@ -216,3 +232,5 @@ if 0:
 	#         raise ValueError("Binary data itself was malformed")
 
 	#     return result
+
+

@@ -24,6 +24,7 @@ class messaging(object):
 	def __init__(self):
 		self.issue_new_line = False # does new line nees to be issued before the next message
 		self.Verbose = True # print messages if true
+		self.char_width = 85
 	def _print(self, mssg, nnl = False):
 		'''
 		Print mssg if self.Verbose is True
@@ -34,22 +35,23 @@ class messaging(object):
 		if self.Verbose:
 			if not nnl:
 				if not self.issue_new_line:
-					sys.stdout.write(mssg.ljust(75,'.') + '\n')
+					sys.stdout.write(mssg.ljust(self.char_width,'.') + '\n')
 					sys.stdout.flush()
 				else:
-				 	sys.stdout.write('\n' + mssg.ljust(75,'.')+ '\n')
+				 	sys.stdout.write('\n' + mssg.ljust(self.char_width,'.')+ '\n')
 					sys.stdout.flush()
 					self.issue_new_line = False
 
 			
 			if nnl:
-				sys.stdout.write('\r' + mssg.ljust(75,'.'))
+				sys.stdout.write('\r' + mssg.ljust(self.char_width,'.'))
 				sys.stdout.flush()
 				self.issue_new_line = True
 
 class Instrument(object):
 	rm = visa.ResourceManager()
 	inl = Instrument_Name_List
+
 
 	def __init__(self, resource_name, Name = 'Instrument Superclass'):
 		#self.rm = visa.ResourceManager()
@@ -62,8 +64,13 @@ class Instrument(object):
 		self.resource_name = resource_name
 		self.Name = Name
 		self.Verbose = False
-		if self.Verbose:
-			print('Instantiating {}'.format(self.Name))
+
+		self.mssg = messaging() #for priting messgs neatly to screen
+		self.mssg.Verbose = self.Verbose
+		self._print('Instantiating {}'.format(self.Name))
+
+	def _print(self, mssg, nnl = False):
+		self.mssg._print(mssg, nnl = nnl)
 
 	def __del__(self):
 		'''
@@ -72,15 +79,15 @@ class Instrument(object):
 		if self.resource_name is not Instrument.inl.DIGITIZER_NI6120:
 			self.inst.close()
 		del(self.inst)
-		if self.Verbose:
-			print('Deleting {}'.format(self.Name))
+		
+		self._print ('Deleting {}'.format(self.Name))
 
 	def __str__(self):
 		print('{} at {}'.format(self.Name, self.resource_name))
 
 	def list_resources(self):
 		'''
-		print oa list of all visa device addresses
+		print a list of all visa device addresses
 		'''
 		Instrument.rm.list_resources()
 
@@ -107,7 +114,7 @@ class Instrument(object):
 		#stb = None
 		if code == None:
 			while  self.inst.read_stb() == 0:
-				#print('stb code is: {}'.format(self.inst.read_stb()))
+				#self._print ('stb code is: {}'.format(self.inst.read_stb()))
 				time.sleep(pause)
 				elapsed = time.time()
 				if elapsed - start > self.inst.timeout/1000.0:
@@ -156,7 +163,7 @@ class ni_digitizer(Instrument):
 		self.inputrange_min = -1.0*self.inputrange_max
 		self.sample_rate = 8.0e5 # samples per second
 		self.timeout = 20.0 # seconds
-		self.samples_per_channel = 1e4 
+		self.samples_per_channel = 2e4 
 
 	def create_channel(self, channel = "Dev1/ai0:1"):
 		'''
@@ -218,10 +225,6 @@ class ni_digitizer(Instrument):
 		self.inst.SetAILowpassEnable("",0)
 
 
-
-
-
-	
 class source_meter(Instrument):
 	def __init__(self,resource_name, Name = 'Source Meter'):
 		Instrument.__init__(self, resource_name, Name = Name)
@@ -314,20 +317,49 @@ class source_meter(Instrument):
 		'''
 		self.inst.write('smu{}.source.output={}'.format(channel, state))
 
-
-
 class network_analyzer(Instrument):
 	def __init__(self,resource_name, Name = 'Network Analyzer'):
 		Instrument.__init__(self, resource_name, Name = Name)
 		self.inst.chunk_size = 2**15 # in bytes
-		self.inst.timeout = 25000 #milliseconds, None is infinite timeout  NOTE: This number applies to queries
+		self.inst.timeout = 155000 #milliseconds, None is infinite timeout  NOTE: This number applies to queries
 		self.inst.values_format.is_binary = True
 		self.inst.values_format.datatype = 'd' # 'f' floats and 'd' double
 		self.inst.values_format.is_big_endian = True
 		self.inst.values_format.container = np.array
 		self.max_na_scan_points = 1601
 		self.min_na_scan_points = 2
+		self.min_power_output = -55 #dBm
 		self.average_count = 0
+
+	def set_sweep_type(self, sweep_type  = 'LIN', channel = 1):
+		'''
+		sweep_type can be:
+		LIN - linear sweep
+		LOG
+		SEGM
+		POW  - power sweep
+		'''
+		self.inst.write(':SENS{0}:SWE:TYPE {1} ;'.format(channel, sweep_type))
+
+	def get_sweep_type(self, channel = 1):
+		'''
+		sweep_type can be:
+		LIN - linear sweep
+		LOG
+		SEGM
+		POW  - power sweep
+		'''
+		sweep_type = self.inst.query_ascii_values(':SENS{0}:SWE:TYPE?;'.format(channel), converter =  lambda x: str(x).strip('\n'))[0]
+		return sweep_type
+
+	def set_CW_freq(self, cw_freq_Hz, channel = 1):
+		'''
+		Set the continuous wave frequency. Used for power sweeps.
+
+		Frequency is on hertz
+		'''
+		self.inst.write(':SENS{0}:FREQ {1:f} ;'.format(channel, cw_freq_Hz))
+
 
 	def on(self):
 		self.inst.write('OUTP ON ;')
@@ -341,12 +373,76 @@ class network_analyzer(Instrument):
 		'''
 		self.inst.write(':SOUR{0}:POW {1} ;'.format(channel, power_dBm))
 
+	def get_power(self, channel = 1):
+		'''
+		Get current output power on specified channel.
+		'''
+		power = self.inst.query_ascii_values(':SOUR{0}:POW?;'.format(channel))[0]
+		return power
+
+	def set_start_power(self, start_power_dBm, channel = 1):
+		'''
+		Set start power for power sweep output power on specified channel.
+		
+		Start power must be lower than stop power.
+		'''
+		self.inst.write(':SOUR{0}:POW:STAR {1} ;'.format(channel, start_power_dBm))
+
+	def get_start_power(self, channel = 1):
+		'''
+		Get start power for power sweep output power on specified channel.
+		
+		Start power must be lower than stop power.
+		'''
+		start_power = self.inst.query_ascii_values(':SOUR{0}:POW:STAR?;'.format(channel))[0]
+		return start_power
+
+	def set_stop_power(self, stop_power_dBm, channel = 1):
+		'''
+		Set start power for power sweep output power on specified channel.
+		
+		Start power must be lower than stop power.
+		'''
+		self.inst.write(':SOUR{0}:POW:STOP {1} ;'.format(channel, stop_power_dBm)) 
+
+	def get_stop_power(self, channel = 1):
+		'''
+		Get stop power for power sweep output power on specified channel.
+		
+		Start power must be lower than stop power.
+		'''
+		stop_power = self.inst.query_ascii_values(':SOUR{0}:POW:STOP?;'.format(channel))[0]
+		return stop_power
+
 	def set_IFBW(self, IFBW_Hz,  channel = 1):
 		'''
 		Change IF bandwidth on specified channel.
 		channel can be 1 to 16.
+		Can range from 10 to 100,000
 		'''
 		self.inst.write(':SENS{0}:BAND {1} ;'.format(channel, IFBW_Hz))
+
+	def get_IFBW(self,  channel = 1):
+		'''
+		Get IF bandwidth on specified channel.
+		channel can be 1 to 16.
+		'''
+		IFBW = self.inst.query_ascii_values(':SENS{0}:BAND?;'.format(channel))[0]
+		return IFBW
+
+	def get_averaging_state(self,channel = 1):
+		'''
+		query if averaging is on or off
+		'''
+		avg_state = self.inst.query_ascii_values(':SENS{0}:AVER?;'.format(channel), converter = lambda x: str(x).strip('\n'))[0]
+		return avg_state
+
+	def get_averaging_count(self,channel = 1):
+		'''
+		query if averaging is on or off
+		'''
+		avg_count = self.inst.query_ascii_values(':SENS{0}:AVER:COUNT?;'.format(channel))[0]
+		return avg_count
 
 	def turn_on_averaging(self, avg_count, channel = 1):
 		'''
@@ -369,7 +465,8 @@ class network_analyzer(Instrument):
 		sweep_time = self.inst.query_ascii_values(':SENS{0}:SWE:TIME?;'.format(channel))[0] # returns list type
 		avg_count = self.average_count if self.average_count > 0 else 1
 		if update_timout:
-			self.inst.timeout = (sweep_time*avg_count + 2.0) * 1000 # milliseconds
+			#This does not seem to work propely -> workaraound is to set high timeout value in __init__()
+			self.inst.timeout = (sweep_time*avg_count*1.50 ) * 1000 # milliseconds
 		return sweep_time #seconds
 
 	def setup_single_scan_mode(self, channel = 1):
@@ -431,6 +528,9 @@ class network_analyzer(Instrument):
 	def set_center_freq(self,f_Hz, channel = 1):
 		self.inst.write(':SENS{0}:FREQ:CENT {1:f} ;'.format(channel, f_Hz))
 
+	def auto_scale(self, channel = 1, trace = 1):
+		self.inst.write(':DISP:WIND{}:TRAC{}:Y:AUTO;'.format(channel, trace))
+
 	def read_scan_data(self,channel = 1):
 		'''
 		Data transfer is set to be in 64-bit floating  point binary format. Data from  last scan is queried.
@@ -452,7 +552,6 @@ class network_analyzer(Instrument):
 		s_parameters = s_parameters + 1j*s_parameters_2d_2n[:,1]
 
 		return frequencies, s_parameters
-
 
 class power_supply(Instrument):
 	def __init__(self,resource_name, Name = 'LNA power supply'):
@@ -493,7 +592,7 @@ class power_supply(Instrument):
 class synthesizer(Instrument):
 	def __init__(self,resource_name, Name = 'Synthesizer'):
 		Instrument.__init__(self, resource_name, Name = Name)
-		self.settle_time = 0.09 # Seconds    Is the time th  syn needs to be within 1KHz of set frequency
+		self.settle_time = 0.1 # Seconds    Is the time th  syn needs to be within 1KHz of set frequency
 
 		identification = self.identify()
 		if 'MG3692B' in identification: # Anritsu
@@ -541,7 +640,7 @@ class fridge_DAC(Instrument): #for the Keithley 213
 		self.inst.query_delay = 0.0
 
 	def set_voltage(self, DAC_port, voltage):
-		print('Setting voltage to {}'.format(voltage))
+		self._print ('Setting voltage to {}'.format(voltage))
 		self.inst.write('P{0} C0 A1 X V{1:f} X'.format(DAC_port,voltage)) 
 		self._wait_stb()
 
