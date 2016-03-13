@@ -24,7 +24,7 @@ class measurement_manager:
 		self.mssg = Instruments.messaging()
 		self.mssg.Verbose = True
 
-		self.Show_Plots = True
+		self.Show_Plots = False
 		self.devices = devices
 		inl = Instruments.Instrument_Name_List
 		self.na_address = inl.NETWORK_ANALYZER_E5071B
@@ -41,9 +41,10 @@ class measurement_manager:
 
 		self.start_directory = os.getcwd()
 		self.data_directory_path = data_directory_prefix + os.sep + data_dir
-		
+		self.plots_directory = self.data_directory_path + os.sep +'Plots'
 		if os.path.exists(self.data_directory_path) == False:
 			logging.error('data directory path does no exist.')
+
 
 		self.measurement_metadata = {'Devices': devices, 'Device_Themometer_Channel': None}
 		self.measurement_metadata['Synthesizer_Scan_Num_BW'] = 8
@@ -725,31 +726,34 @@ class measurement_manager:
 
 		
 		if self.Delay_Time != np.float(0):
-			time.sleep(self.Delay_Time)
 			self._print('Executing delay time before taking data. first scan begins at {}'.format((datetime.datetime.now() + datetime.timedelta(seconds = self.Delay_Time)).strftime( '%m/%d/%Y %H:%M:%S')))
+			time.sleep(self.Delay_Time)
 
+		#
+		#
+		# Start making plot
+		#
+		#
+		plt.rcParams["axes.titlesize"] = 9
+		plt.rcParams["ytick.labelsize"] = 5
+		plt.rcParams["xtick.labelsize"] = 5
+		
+		self.fig = plt.figure( figsize=(8, 8), dpi=100)
 
-
+		self.ax = {}
+		self.ax[1] = self.fig.add_subplot(2,2,(1,2)) #na scan
+		self.ax[2] = self.fig.add_subplot(2,2,3) #syn scan
+		self.ax[3] = self.fig.add_subplot(2,2,4) #noise
+		plt.subplots_adjust(left=.1, bottom=.1, right=None ,wspace=.35, hspace=.3)
+		#position plot window to extreme right
+		mngr = plt.get_current_fig_manager()
+		#plt.suptitle('Nonlinear Resonator Plots')
+		mngr.window.setGeometry(3000,100,800,852)
+		# self.background = {}
+		# self.background[1] = self.fig.canvas.copy_from_bbox(self.ax[1].bbox)
+		# self.background[2] = self.fig.canvas.copy_from_bbox(self.ax[2].bbox)
+		# self.background[3] = self.fig.canvas.copy_from_bbox(self.ax[3].bbox)
 		if self.Show_Plots:
-			plt.rcParams["axes.titlesize"] = 10
-			plt.rcParams["ytick.labelsize"] = 5
-			plt.rcParams["xtick.labelsize"] = 5
-			
-			self.fig = plt.figure( figsize=(8, 8), dpi=100)
-
-			self.ax = {}
-			self.ax[1] = self.fig.add_subplot(2,2,(1,2)) #na scan
-			self.ax[2] = self.fig.add_subplot(2,2,3) #syn scan
-			self.ax[3] = self.fig.add_subplot(2,2,4) #noise
-			plt.subplots_adjust(left=.1, bottom=.1, right=None ,wspace=.35, hspace=.3)
-			#position plot window to extreme right
-			mngr = plt.get_current_fig_manager()
-			#plt.suptitle('Nonlinear Resonator Plots')
-			mngr.window.setGeometry(3000,100,800,852)
-			# self.background = {}
-			# self.background[1] = self.fig.canvas.copy_from_bbox(self.ax[1].bbox)
-			# self.background[2] = self.fig.canvas.copy_from_bbox(self.ax[2].bbox)
-			# self.background[3] = self.fig.canvas.copy_from_bbox(self.ax[3].bbox)
 			plt.ion()
 			plt.show()
 			#plt.draw()
@@ -759,8 +763,8 @@ class measurement_manager:
 
 		with self._fi_ctx():
 			t_index = 0
-			for t in self.Heater_Voltage:
-				#self.fi.resume()
+			for t in self.Heater_Voltage: 
+				self.fi.resume() if t_index > 0 else None
 				self.fi.set_stack_heater_voltage(t)
 				self.fi.set_thermometer_bias_voltage(self.Thermometer_Voltage_Bias[t_index])
 				self.fi.suspend()
@@ -768,8 +772,8 @@ class measurement_manager:
 				if (t_index != 0) & (self.measurement_metadata['Wait_Time'] != np.float(0)):
 					with self._na_ctx():
 						self.na.off()
-						time.sleep(self.measurement_metadata['Wait_Time'])
 						self._print('Waiting for temperature. Network analyzer stimulus off. Next scan at {}'.format((datetime.datetime.now() + datetime.timedelta(seconds = self.measurement_metadata['Wait_Time'])).strftime( '%m/%d/%Y %H:%M:%S')))
+						time.sleep(self.measurement_metadata['Wait_Time'])
 						self.na.on()
 
 				p_index = 0	
@@ -783,8 +787,8 @@ class measurement_manager:
 						self.fi.set_aux_channel_voltage(a)
 						self.fi.suspend()
 
-
-						self._print('Executing scan: Temp {0} of {1}, Pow {2} of {3}, Aux {4} of {5}'.format(t_index+1,self.num_temp_sweep_pts,p_index+1,self.num_power_sweep_pts, a_index+1,self.num_aux_sweep_pts) )					
+						scan_status = 'Executing scan: Temp {0} of {1}, Pow {2} of {3}, Aux {4} of {5}'.format(t_index+1,self.num_temp_sweep_pts,p_index+1,self.num_power_sweep_pts, a_index+1,self.num_aux_sweep_pts) 
+						self._print(scan_status)					
 						
 						#sweep_data_columns are defined in _setup_na_for_scans() context manager
 						self.Sweep_Array = np.zeros(1, dtype = self.sweep_data_columns)
@@ -820,26 +824,28 @@ class measurement_manager:
 
 						
 
-						if self.Show_Plots: # issue '%matplotlib qt' in spyder?
-							#self.ax[1].clear()
-							
-							line = self.ax[1].plot(self.Sweep_Array[0]['Frequencies'],20*np.log10(np.abs(self.Sweep_Array[0]['S21'])))
-							self.ax[1].set_xlabel('Frequency [Hz]')
-							self.ax[1].set_ylabel('$20*Log_{10}[|S_{21}|]$ [dB]')
-
-							self.ax[1].set_title('Run: {0}; Sensor: {1}; Ground: {2}; Power {3} dBm'.format(self.measurement_metadata['Run'], 
-																									self.measurement_metadata['Sensor'], 
-																									self.measurement_metadata['Ground_Plane'], 
-																									p))		
-							#ax.legend(loc = 'best', fontsize = 9)
-							self.ax[1].grid(which = 'both')
-							# self.fig.canvas.restore_region(self.background[1])
-							# self.ax[1].draw_artists(line[0])
-							# self.fig.canvas.blit(self.ax[1].bbox)
+						#
+						# Update Plot
+						#	
+						line = self.ax[1].plot(self.Sweep_Array[0]['Frequencies'],20*np.log10(np.abs(self.Sweep_Array[0]['S21'])))
+						self.ax[1].set_xlabel('Frequency [Hz]')
+						self.ax[1].set_ylabel('$20*Log_{10}[|S_{21}|]$ [dB]')
+						plt.suptitle('Run: {0}; Sensor: {1}; Ground: {2}; Date: {3}'.format(self.measurement_metadata['Run'], 
+																								self.measurement_metadata['Sensor'], 
+																								self.measurement_metadata['Ground_Plane'], 
+																								datetime.datetime.now().strftime('%Y%m%d%H%M')))	
+						self.ax[1].set_title(scan_status+'; Temp: {0:0.3f}; Last Power: {1} dBm'.format(np.median(temperature_readings), 
+ 																						p))		
+						#ax.legend(loc = 'best', fontsize = 9)
+						self.ax[1].grid(which = 'both')
+						# self.fig.canvas.restore_region(self.background[1])
+						# self.ax[1].draw_artists(line[0])
+						# self.fig.canvas.blit(self.ax[1].bbox)
+						if self.Show_Plots:
 							plt.draw()
 
-							time.sleep(0.2) # Dont use plt.pause() .. it's deprecated
-
+						time.sleep(0.2) # Dont use plt.pause() .. it's deprecated
+						
 
 						if self.do_syn_scan:
 							######
@@ -885,10 +891,11 @@ class measurement_manager:
 
 						
 						self.save_hf5(database_filename , overwrite = False)
+						self._save_fig(self.fig, Name = None)
 						a_index = a_index +1
 					p_index = p_index +1		
 				t_index = t_index + 1
-		self._update_file(sweep_parameter_file, update_token, self.current_sweep_data_table)
+		self._update_file(sweep_parameter_file , update_token, self.current_sweep_data_table + ' in ' + database_filename)
 		self.current_sweep_data_table = None
 		
 		self._perform_na_power_scan_calibration()
@@ -1092,26 +1099,28 @@ class measurement_manager:
 									Frequencies_Syn = frequencies_syn,
 									Noise_Chan_Input_Atn = attenuation_1, 
 									Noise_Chan_Output_Atn = attenuation_2)
-			if self.Show_Plots: # issue '%matplotlib qt' in spyder?
-				self.ax[2].clear()
-
-				line = self.ax[2].plot(self.Sweep_Array[0]['S21_Syn'].real,self.Sweep_Array[0]['S21_Syn'].imag)
-				self.ax[2].set_xlabel('I')
-				self.ax[2].set_ylabel('Q')
-				self.ax[2].set_title( r'Syn Scan, $f_{{ctr}}$' + ' = {freq:0.3f} MHz, Q = {Qt:0.0f}k'.format(freq = f_center/1.e6, Qt = Q_center/1.e3))		
-				#ax.legend(loc = 'best', fontsize = 9)
-				self.ax[2].grid()
+			 
+			#
+			# Update Plot
+			#
+			self.ax[2].clear()
+			line = self.ax[2].plot(self.Sweep_Array[0]['S21_Syn'].real,self.Sweep_Array[0]['S21_Syn'].imag)
+			self.ax[2].set_xlabel('I')
+			self.ax[2].set_ylabel('Q')
+			self.ax[2].set_title( r'Syn Scan, $f_{{ctr}}$' + ' = {freq:0.3f} MHz, Q = {Qt:0.0f}k'.format(freq = f_center/1.e6, Qt = Q_center/1.e3))		
+			#ax.legend(loc = 'best', fontsize = 9)
+			self.ax[2].grid()
+			if self.Show_Plots:
 				plt.draw()
 				time.sleep(0.2)
+			#plt.show()
+			# self.ax[2].grid()
+			# self.fig.canvas.restore_region(self.background[2])
+			# self.ax[2].draw_artists(line[0])
+			# self.fig.canvas.blit(self.ax[2].bbox)
 				
-				#plt.show()
-				# self.ax[2].grid()
-				# self.fig.canvas.restore_region(self.background[2])
-				# self.ax[2].draw_artists(line[0])
-				# self.fig.canvas.blit(self.ax[2].bbox)
-				
-			###### Update This Code Later. Remove use of  self.swp....
 
+			###### Update This Code Later. Remove use of  self.swp....
 			self.swp._define_sweep_data_columns(frequencies_syn.size, 1)
 			self.swp.Sweep_Array = np.zeros(1, dtype = self.swp.sweep_data_columns)
 			self.swp._define_sweep_array(0,
@@ -1167,35 +1176,36 @@ class measurement_manager:
 												Noise_S21_Off_Res    = Ip + 1j*Qp,
 												Noise_S21_Std_Off_Res=  Istd + 1j*Qstd
 												)
+				#
+				# Update Plot
+				#
+				self.ax[3].clear()
+				line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_II_On_Res'], label = 'PII On')
+				line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_QQ_On_Res'], label = 'PQQ On')
+				line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],np.abs(self.Sweep_Array[0]['Noise_IQ_On_Res']), label = 'PIQ On')
+				if self.measurement_metadata['Measure_Off_Res_Noise']: 
+					line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_II_Off_Res'], label = 'PII Off')
+					line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_QQ_Off_Res'], label = 'PQQ Off')
+					line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],np.abs(self.Sweep_Array[0]['Noise_IQ_Off_Res']), label = 'PIQ Off')
 
-				if self.Show_Plots: # issue '%matplotlib qt' in spyder?
-					self.ax[3].clear()
+				self.ax[3].set_xlabel('Frequency')
+				self.ax[3].set_ylabel('$V^2/Hz$')
 
-					line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_II_On_Res'], label = 'PII On')
-					line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_QQ_On_Res'], label = 'PQQ On')
-					line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],np.abs(self.Sweep_Array[0]['Noise_IQ_On_Res']), label = 'PIQ On')
-					if self.measurement_metadata['Measure_Off_Res_Noise']: 
-						line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_II_Off_Res'], label = 'PII Off')
-						line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],self.Sweep_Array[0]['Noise_QQ_Off_Res'], label = 'PQQ Off')
-						line = self.ax[3].loglog(self.Sweep_Array[0]['Noise_Freq_Vector'],np.abs(self.Sweep_Array[0]['Noise_IQ_Off_Res']), label = 'PIQ Off')
+				#draw the point at which noise is take on ax[2] and put a circle of diameter  1*sigma about that point 
+				Ip_on_res = self.Sweep_Array[0]['Noise_S21_On_Res'].real
+				Qp_on_res = self.Sweep_Array[0]['Noise_S21_On_Res'].imag
+				circle = plt.Circle((Ip_on_res,Qp_on_res),np.abs(self.Sweep_Array[0]['Noise_S21_Std_On_Res'])*0.5, color = 'y', fill = False, linestyle = 'dashed', clip_on = True, label = 'within 1 sigma' )
+				self.ax[2].add_artist(circle)
+				point = self.ax[2].plot(Ip_on_res,Qp_on_res, 'y*', label = 'noise point')
 
-					self.ax[3].set_xlabel('Frequency')
-					self.ax[3].set_ylabel('$V^2/Hz$')
-
-					#draw the point at which noise is take on ax[2] and put a circle of diameter  1*sigma about that point 
-					Ip_on_res = self.Sweep_Array[0]['Noise_S21_On_Res'].real
-					Qp_on_res = self.Sweep_Array[0]['Noise_S21_On_Res'].imag
-					circle = plt.Circle((Ip_on_res,Qp_on_res),np.abs(self.Sweep_Array[0]['Noise_S21_Std_On_Res'])*0.5, color = 'y', fill = False, linestyle = 'dashed', clip_on = True, label = 'within 1 sigma' )
-					self.ax[2].add_artist(circle)
-					point = self.ax[2].plot(Ip_on_res,Qp_on_res, 'y*', label = 'noise point')
-
-					self.ax[3].set_title(r'I and Q PSD, $f_{{noise}}$ = {fn:0.3f} MHz'.format(fn = f_noise/1e6))		
-					self.ax[3].legend(loc = 'best', fontsize = 6)
-					self.ax[3].grid(which='both')
-					self.ax[3].set_ylim(bottom = 8e-17)
+				self.ax[3].set_title(r'I and Q PSD, $f_{{noise}}$ = {fn:0.3f} MHz'.format(fn = f_noise/1e6))		
+				self.ax[3].legend(loc = 'best', fontsize = 6)
+				self.ax[3].grid(which='both')
+				self.ax[3].set_ylim(bottom = 8e-17)
+				if self.Show_Plots:
 					plt.draw()
 					time.sleep(0.2)
-					#plt.show()
+				#plt.show()
 			else:
 				self._print('Unable to fit synthesizer scan')
 	
@@ -1352,3 +1362,25 @@ class measurement_manager:
 		if divmod(noise_spectrum_length,1)[1] != 0: 
 			ValueError('Noise spectrum length is not an integer is not an integer')
 		return int(noise_spectrum_length)
+	
+	def _save_fig(self, fig, Name = None):
+		if not os.path.isdir(self.plots_directory):
+			os.makedirs(self.plots_directory)
+		
+		if Name == None:
+			name = ''
+		else :
+			name = name + '_'
+
+		#os.chdir(self.plots_directory)
+
+		save_name =  self.measurement_metadata['Run'] + '_'+ name + self.current_sweep_data_table.split('/')[-1]  + '_'+ self.measurement_start_time + '.pdf'
+
+		fig.savefig(self.plots_directory + os.sep +save_name, dpi=300, transparency  = True, format = 'pdf', bbox_inches='tight')#Title.replace('\n','_').replace(' ','_')+date
+		# if Make_PGF:
+		# 	#cur_backend = mpl.get_backend()
+		# 	#plt.switch_backend('pgf')
+		# 	name = name + '.pgf'
+		# 	plt.savefig(name, bbox_inches = 'tight', transparancy = True) #
+		# 	#plt.switch_backend(cur_backend)
+		#os.chdir(self.data_directory_path)
