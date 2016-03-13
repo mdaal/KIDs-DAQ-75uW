@@ -5,7 +5,8 @@ import logging
 import string
 import struct
 import PyDAQmx as pdmx # developed with version 1.3
-import sys
+import sys, os, io
+
 
 class Instrument_Name_List:
 	NETWORK_ANALYZER_E5071B = 'TCPIP0::169.229.225.4::inst0::INSTR'
@@ -24,7 +25,50 @@ class messaging(object):
 	def __init__(self):
 		self.issue_new_line = False # does new line nees to be issued before the next message
 		self.Verbose = True # print messages if true
-		self.char_width = 85
+		self.char_width = 90
+		self.status_file_name  = 'Status.txt'
+
+	def _print_to_file(self, mssg, Status_File_Dir = None, Append = True):
+		'''
+		print mssg to beginning of file (self.status_file_name) located in Status_File_Dir.
+
+		If Append == True, print mssg to top line of file and keep previus text, 
+		if Append == False, print mssg to new file with no other, previous, text.
+		'''
+		if not os.path.isdir(Status_File_Dir):
+			os.makedirs(Status_File_Dir)
+
+		file_path = Status_File_Dir + os.sep + self.status_file_name
+
+		# make a temp file in same directory as the status file 
+		sep_pos = file_path.rfind(os.sep)
+		if sep_pos == -1:
+			tmp_file_path = 'tmp.txt'
+		else:
+			tmp_file_path = file_path[:sep_pos +1] + 'tmp.txt'
+
+		if Append:
+			with io.open(file_path, mode = 'a') as file:
+				file.write(unicode( mssg.ljust(self.char_width,'.') + '\n'))
+			# with io.open(file_path, mode = 'r') as file:
+			# 	with io.open(tmp_file_path, mode = 'w') as tmp_file:
+			# 		proceed = 1
+			# 		line = mssg.ljust(self.char_width,'.') + '\n'
+			# 		#tmp_file.write(unicode( mssg.ljust(self.char_width,'.')))
+			# 		while proceed:
+			# 			tmp_file.write(unicode(line))
+			# 			try:
+			# 				line = file.next()+ '\n'
+			# 			except:
+			# 				proceed = 0
+			# os.remove(file_path)
+			# os.renames(tmp_file_path, file_path)
+		else: 
+			with io.open(file_path, mode = 'w') as file:
+				file.write(unicode( mssg.ljust(self.char_width,'.') + '\n' ))
+
+
+
 	def _print(self, mssg, nnl = False):
 		'''
 		Print mssg if self.Verbose is True
@@ -142,6 +186,15 @@ class attenuator_box(Instrument):
 	def __init__(self, resource_name, Name = 'Attenuator Box'):
 		Instrument.__init__(self, resource_name, Name = Name)
 		self.atn_func = lambda a: (a//2)*2 # floors to factor of 2
+
+	def get_atn_chan(self, channel):
+		'''
+		Returns the attenuation value on the specified channel
+		'''
+		self.inst.write('CHAN {}'.format(channel))
+		attenuation = self.inst.query_ascii_values('ATTN?')[0]
+		return attenuation
+
 
 	def set_atn_chan(self,channel,attenuation):
 		'''

@@ -263,8 +263,10 @@ class measurement_manager:
 			self.switch_to_na_channel()
 
 
-	def _print(self, mssg, nnl = False):
+	def _print(self, mssg, nnl = False, Append  = True ):
 		self.mssg._print(mssg, nnl = nnl)
+		if nnl == False:
+			self.mssg._print_to_file( mssg, Status_File_Dir = self.data_directory_path, Append = Append )
 
 
 
@@ -438,6 +440,8 @@ class measurement_manager:
 			("Noise_II_Off_Res"			, np.float64,(noise_spectrum_length_off_res,)),
 			("Noise_QQ_Off_Res"			, np.float64,(noise_spectrum_length_off_res,)),
 			("Noise_IQ_Off_Res"			, np.complex128,(noise_spectrum_length_off_res,)),
+			("Noise_Atten_Mixer_Input"  , np.float32), # Attenuator box attenuation value at mixer input (box chan 2)
+			("Noise_Atten_Fridge_Input" , np.float32), # Attenuator box attenuation value on input to fridge (box chan 1)
 			("Noise_S21_Off_Res"        , np.complex128), # The I/Q point at which off res noise was taken
 			("Noise_S21_Std_Off_Res"    , np.complex128), # The standard deviation in the measurement of the I/Q point at which off res noise was taken
 			("Noise_Freq_Vector"    	, np.float64,(noise_spectrum_length,)), # in Hz, the  frequencies of the noise spectrum
@@ -724,6 +728,7 @@ class measurement_manager:
 		self.measurement_metadata['Measurement_Start_Time'] = self.measurement_start_time
 		self._record_LNA_settings()
 
+		self._print('Commencing sweep as speficied in file "{}"'.format(sweep_parameter_file), nnl = False, Append  = False )
 		
 		if self.Delay_Time != np.float(0):
 			self._print('Executing delay time before taking data. first scan begins at {}'.format((datetime.datetime.now() + datetime.timedelta(seconds = self.Delay_Time)).strftime( '%m/%d/%Y %H:%M:%S')))
@@ -744,6 +749,8 @@ class measurement_manager:
 		self.ax[1] = self.fig.add_subplot(2,2,(1,2)) #na scan
 		self.ax[2] = self.fig.add_subplot(2,2,3) #syn scan
 		self.ax[3] = self.fig.add_subplot(2,2,4) #noise
+		self.lines = {}
+		self.circles = {}
 		plt.subplots_adjust(left=.1, bottom=.1, right=None ,wspace=.35, hspace=.3)
 		#position plot window to extreme right
 		mngr = plt.get_current_fig_manager()
@@ -787,8 +794,8 @@ class measurement_manager:
 						self.fi.set_aux_channel_voltage(a)
 						self.fi.suspend()
 
-						scan_status = 'Executing scan: Temp {0} of {1}, Pow {2} of {3}, Aux {4} of {5}'.format(t_index+1,self.num_temp_sweep_pts,p_index+1,self.num_power_sweep_pts, a_index+1,self.num_aux_sweep_pts) 
-						self._print(scan_status)					
+						scan_status = 'Temp {0} of {1}, Pow {2} of {3}, Aux {4} of {5}'.format(t_index+1,self.num_temp_sweep_pts,p_index+1,self.num_power_sweep_pts, a_index+1,self.num_aux_sweep_pts) 
+						self._print('Executing scan: '  + scan_status)					
 						
 						#sweep_data_columns are defined in _setup_na_for_scans() context manager
 						self.Sweep_Array = np.zeros(1, dtype = self.sweep_data_columns)
@@ -802,12 +809,16 @@ class measurement_manager:
 						self._perform_subscans()
 						
 					
-						
+						# Read firdge temperature and LHe level
 						self.fi.resume()
 						temperature_readings =  np.empty((num_temp_readings,), np.float64)
 						for i in xrange( temperature_readings.size):
 							temperature_readings[i] = self.fi.read_temp(thermometer_channel_name)
+						Fridge_LHe_Level = self.fi.read_LHe_level()
+						Fridge_Temp = np.median(temperature_readings)
 						self.fi.suspend()
+						self._print('Fridge Status: Temperature {:0.0f} mK, LHe Level {:0.1f}%, Datetime: {}'.format(Fridge_Temp*1000.0, Fridge_LHe_Level, datetime.datetime.now().strftime( '%m/%d/%Y %H:%M:%S')))
+
 
 						self._define_sweep_array(0,  #The  array  is only 1 record long and this record is index 0
 												Fstart = self.Sweep_Array[0]['Frequencies'][0],
@@ -826,16 +837,20 @@ class measurement_manager:
 
 						#
 						# Update Plot
-						#	
-						line = self.ax[1].plot(self.Sweep_Array[0]['Frequencies'],20*np.log10(np.abs(self.Sweep_Array[0]['S21'])))
+						#
+						line  = self.ax[1].plot(self.Sweep_Array[0]['Frequencies'],20*np.log10(np.abs(self.Sweep_Array[0]['S21'])))
+						# if self.lines.has_key('Transmission'):
+						# 	self.lines['Transmission'].set_data(self.Sweep_Array[0]['Frequencies'],20*np.log10(np.abs(self.Sweep_Array[0]['S21'])))
+						# else:
+						# 	self.lines['Transmission'] = self.ax[1].plot(self.Sweep_Array[0]['Frequencies'],20*np.log10(np.abs(self.Sweep_Array[0]['S21'])))[0]
 						self.ax[1].set_xlabel('Frequency [Hz]')
 						self.ax[1].set_ylabel('$20*Log_{10}[|S_{21}|]$ [dB]')
 						plt.suptitle('Run: {0}; Sensor: {1}; Ground: {2}; Date: {3}'.format(self.measurement_metadata['Run'], 
 																								self.measurement_metadata['Sensor'], 
 																								self.measurement_metadata['Ground_Plane'], 
 																								datetime.datetime.now().strftime('%Y%m%d%H%M')))	
-						self.ax[1].set_title(scan_status+'; Temp: {0:0.3f}; Last Power: {1} dBm'.format(np.median(temperature_readings), 
- 																						p))		
+						self.ax[1].set_title(scan_status+'; Temp: {0:0.3f}; Last Power: {1} dBm; LHe Level: {2:0.1f}%'.format(np.median(temperature_readings), 
+ 																						p, Fridge_LHe_Level))		
 						#ax.legend(loc = 'best', fontsize = 9)
 						self.ax[1].grid(which = 'both')
 						# self.fig.canvas.restore_region(self.background[1])
@@ -1057,9 +1072,11 @@ class measurement_manager:
 			#set syn LO power
 			self.syn.set_power(LO_power)
 
-			#set attenuator box attenuation values
+			#set/ record attenuator box attenuation values
 			self.atn.set_atn_chan(1,attenuation_1)
+			attenuation_1_reading = self.atn.get_atn_chan(1)
 			self.atn.set_atn_chan(2,attenuation_2)
+			attenuation_2_reading = self.atn.get_atn_chan(2)
 
 			#setup NI digitizer
 			self.iqd.create_channel()
@@ -1081,7 +1098,9 @@ class measurement_manager:
 
 			self._define_sweep_array(0,
 						Bkgd_S21_Syn  = s21_bkgd,
-						Bkgd_Freq_Syn  = bkgd_freqs
+						Bkgd_Freq_Syn  = bkgd_freqs,
+						Noise_Atten_Fridge_Input = attenuation_1_reading,
+						Noise_Atten_Mixer_Input = attenuation_2_reading
 						)
 			self._print('')
 

@@ -147,9 +147,9 @@ if 1:
 	import Data_Inspection
 	reload(Data_Inspection)
 	di  = Data_Inspection.data_inspector('Run53ab')
-	mm.execute_sweep('NPT_Sweep.txt', 'Run_53ab_Data.h5')
+	#mm.execute_sweep('NPT_Sweep.txt', 'Run_53ab_Data.h5')
 	
-	#mm.execute_sweep('Sweep_Test.txt', 'Run_53ab_Data_Test.h5')
+	mm.execute_sweep('Sweep_Test.txt', 'Run_53ab_Data_Test.h5')
 	
 	# di.load_hf5('Run_53ab_Data_Test.h5','/SweepN/T201603092312_SweepN')
 	# di.plot_noise(Plot_Off_Res = True)
