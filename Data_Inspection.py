@@ -4,6 +4,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import os
 import KAM
+import logging
 
 data_directory_prefix = 'Z:\\user\\miguel\\KIPS_Data'
 

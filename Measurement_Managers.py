@@ -641,6 +641,7 @@ class measurement_manager:
 										fsteps_syn = self.num_syn_freq_points
 										)
 			self.na.set_sweep_type(sweep_type  = 'LIN') # put in linear freq sweep mode
+			self.na.on()
 			self.na.set_num_points_per_scan(num_points_per_na_scan)
 			self.na.set_IFBW(IFBW)
 			if avg_fac  > 0:
@@ -731,7 +732,7 @@ class measurement_manager:
 		self._print('Commencing sweep as speficied in file "{}"'.format(sweep_parameter_file), nnl = False, Append  = False )
 		
 		if self.Delay_Time != np.float(0):
-			self._print('Executing delay time before taking data. first scan begins at {}'.format((datetime.datetime.now() + datetime.timedelta(seconds = self.Delay_Time)).strftime( '%m/%d/%Y %H:%M:%S')))
+			self._print('Executing delay time before taking data. First scan begins at {}'.format((datetime.datetime.now() + datetime.timedelta(seconds = self.Delay_Time)).strftime( '%m/%d/%Y %H:%M:%S')))
 			time.sleep(self.Delay_Time)
 
 		#
@@ -904,17 +905,17 @@ class measurement_manager:
 								self.Sweep_Array[0]['Is_Valid'] = False 
 								self._print('Unable to fit NA scan.')
 
-						
+						# record power calibration if this is the last scan in loop		
+						if (t_index + 1 == self.num_temp_sweep_pts) & (p_index + 1 == self.num_power_sweep_pts) & (a_index + 1 == self.num_aux_sweep_pts):
+							self._perform_na_power_scan_calibration()
 						self.save_hf5(database_filename , overwrite = False)
-						self._save_fig(self.fig, Name = None)
+						#self._save_fig(self.fig, Name = None)
 						a_index = a_index +1
 					p_index = p_index +1		
 				t_index = t_index + 1
 		self._update_file(sweep_parameter_file , update_token, self.current_sweep_data_table + ' in ' + database_filename)
-		self.current_sweep_data_table = None
 		
-		self._perform_na_power_scan_calibration()
-
+		self._save_fig(self.fig, Name = None)
 		with self._na_ctx():			
 			self._restore_na_settings()
 
@@ -923,6 +924,7 @@ class measurement_manager:
 				self.fi.resume()
 				self.fi.set_stack_heater_voltage(End_Heater_Voltage)
 				self.fi.suspend()
+		self.current_sweep_data_table = None
 
 
 	def get_current_na_frequency_range(self):
@@ -1226,7 +1228,10 @@ class measurement_manager:
 					time.sleep(0.2)
 				#plt.show()
 			else:
-				self._print('Unable to fit synthesizer scan')
+				if self.measurement_metadata['Measure_On_Res_Noise'] == False:
+					pass
+				else: 
+					self._print('Unable to fit synthesizer scan')
 	
 	def _configure_iqd_sampling(self, **configs):
 		'''
