@@ -23,7 +23,7 @@ class measurement_manager:
 		'''
 		self.mssg = Instruments.messaging()
 		self.mssg.Verbose = True
-
+		self.use_adj_dist = True # use adjacent distance to find f0  of fit does not work
 		self.Show_Plots = False
 		self.devices = devices
 		inl = Instruments.Instrument_Name_List
@@ -724,6 +724,9 @@ class measurement_manager:
 		self.num_power_sweep_pts = len(self.Powers) 
 		self.num_temp_sweep_pts =  len(self.Heater_Voltage) 
 		self.scan_bw = np.float64(self.measurement_metadata['Frequency_Range'][1]) - np.float64(self.measurement_metadata['Frequency_Range'][0])
+		if  self.scan_bw <= 0:
+			logging.error('Stop frequency must be greater than start freqency. Fix sweep parameter file')
+			return 
 
 		self.measurement_start_time = datetime.datetime.now().strftime('%Y%m%d%H%M')
 		self.measurement_metadata['Measurement_Start_Time'] = self.measurement_start_time
@@ -941,11 +944,15 @@ class measurement_manager:
 		then return to 'return_voltage' (if it not None) or to the voltage it was at before.
 		'''
 		with self._fi_ctx():
+			prev_max_voltage = self.fi.Max_Stack_Heater_Voltage
+			current_max_voltage = 10
+			self.fi.Max_Stack_Heater_Voltage = current_max_voltage
 			if return_voltage == None:
 				return_voltage = self.fi.get_stack_heater_voltage()	
 			self.fi.set_stack_heater_voltage(voltage)
 			time.sleep(time_seconds)
 			self.fi.set_stack_heater_voltage(return_voltage)
+			self.fi.Max_Stack_Heater_Voltage = prev_max_voltage
 			self.fi.suspend()
 		
 	def read_temp(self):
@@ -1160,7 +1167,13 @@ class measurement_manager:
 			# Measure on resonance noise at f_noise if fit is valid, then measure off resonance noise
 			#
 			######			
-			if self.swp.Sweep_Array[0]['Is_Valid'] & self.measurement_metadata['Measure_On_Res_Noise']:
+			if (self.swp.Sweep_Array[0]['Is_Valid'] | self.use_adj_dist) & self.measurement_metadata['Measure_On_Res_Noise'] :
+				if self.swp.Sweep_Array[0]['Is_Valid'] == False:
+					self._print('Resonance fit failed. Using adjacent distance to estimate on resonance noise frequency. ')
+					_freq = frequencies_syn[:-1] # make frequencies_syn the same size as _s21_syn_dif after np.diff 
+					_s21_syn_dif = np.abs(np.diff(s21_syn ))
+					f_noise = _freq[_s21_syn_dif == _s21_syn_dif.max()][0]
+
 				self.syn.set_freq(f_noise)
 				time.sleep(5) # extra pause for synthesizer freq stability
 				# print('disconnect cables now')

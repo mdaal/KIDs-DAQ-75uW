@@ -147,13 +147,13 @@ if 1:
 	import Data_Inspection
 	reload(Data_Inspection)
 	di  = Data_Inspection.data_inspector('Run53ab')
-	#mm.execute_sweep('P_Sweep2.txt', 'Run_53ab_Data.h5')
+	mm.execute_sweep('A_Sweep4.txt', 'Run_53ab_Data.h5')
 	
-	mm.execute_sweep('Sweep_Test.txt', 'Run_53ab_Data_Test.h5')
+	#mm.execute_sweep('Sweep_Test.txt', 'Run_53ab_Data_Test.h5')
 	
 	# di.load_hf5('Run_53ab_Data_Test.h5','/SweepN/T201603092312_SweepN')
 	# di.plot_noise(Plot_Off_Res = True)
-	#mm.pulse_stack_heater_voltage(9, 75, return_voltage = None)
+	# mm.pulse_stack_heater_voltage(9, 75, return_voltage = None)
 	# with mm._na_ctx():
 	# 	 mm._perform_na_power_scan_calibration()
 
